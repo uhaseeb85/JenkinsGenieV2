@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+  
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+  
+  flyway:
+    enabled: false
+
+cifixer:
+  github:
+    token: test-token
+  jenkins:
+    webhook-secret: test-secret
+  llm:
+    endpoint: http://localhost:11434
+  working-directory: /tmp/cifixer-test
+  task-processing:
+    enabled: false
+
+logging:
+  level:
+    com.example.cifixer: DEBUG
