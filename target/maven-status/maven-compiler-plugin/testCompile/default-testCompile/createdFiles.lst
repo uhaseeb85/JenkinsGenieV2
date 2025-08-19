@@ -1,8 +1,0 @@
-com\example\cifixer\util\SpringProjectAnalyzerTest.class
-com\example\cifixer\agents\CodeFixAgentIntegrationTest.class
-com\example\cifixer\core\TaskQueueServiceTest.class
-com\example\cifixer\web\WebhookIntegrationTest.class
-com\example\cifixer\agents\CodeFixAgentIntegrationTest$TestCandidateFile.class
-com\example\cifixer\MultiAgentCiFixerApplicationTest.class
-com\example\cifixer\git\RepoAgentIntegrationTest.class
-com\example\cifixer\agents\RetrieverAgentTest.class
