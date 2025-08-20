@@ -1,6 +1,7 @@
 package com.example.cifixer.web;
 
 import com.example.cifixer.core.Orchestrator;
+import com.example.cifixer.core.RetryHandler;
 import com.example.cifixer.core.Task;
 import com.example.cifixer.core.TaskQueue;
 import com.example.cifixer.store.Build;
@@ -30,15 +31,18 @@ public class BuildController {
     private final TaskRepository taskRepository;
     private final TaskQueue taskQueue;
     private final Orchestrator orchestrator;
+    private final RetryHandler retryHandler;
     
     public BuildController(BuildRepository buildRepository, 
                           TaskRepository taskRepository,
                           TaskQueue taskQueue,
-                          Orchestrator orchestrator) {
+                          Orchestrator orchestrator,
+                          RetryHandler retryHandler) {
         this.buildRepository = buildRepository;
         this.taskRepository = taskRepository;
         this.taskQueue = taskQueue;
         this.orchestrator = orchestrator;
+        this.retryHandler = retryHandler;
     }
     
     /**
@@ -141,26 +145,27 @@ public class BuildController {
     public ResponseEntity<Map<String, String>> retryTask(@PathVariable Long taskId) {
         logger.info("Manual task retry requested: taskId={}", taskId);
         
-        Optional<Task> taskOpt = taskRepository.findById(taskId);
-        if (!taskOpt.isPresent()) {
-            logger.warn("Task not found for retry: taskId={}", taskId);
-            return ResponseEntity.notFound().build();
-        }
-        
-        Task task = taskOpt.get();
-        
-        // Reset task for retry
-        task.setStatus(com.example.cifixer.core.TaskStatus.PENDING);
-        task.setAttempt(0);
-        task.setErrorMessage(null);
-        taskRepository.save(task);
-        
-        logger.info("Task reset for retry: taskId={}", taskId);
-        
         Map<String, String> response = new HashMap<>();
-        response.put("status", "success");
-        response.put("message", "Task queued for retry");
-        return ResponseEntity.ok(response);
+        
+        try {
+            boolean success = retryHandler.manualRetry(taskId);
+            
+            if (success) {
+                response.put("status", "success");
+                response.put("message", "Task queued for retry");
+                return ResponseEntity.ok(response);
+            } else {
+                response.put("status", "error");
+                response.put("message", "Task cannot be retried (not found or not in failed state)");
+                return ResponseEntity.badRequest().body(response);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error during manual task retry: taskId={}", taskId, e);
+            response.put("status", "error");
+            response.put("message", "Internal error during retry: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
     }
     
     /**

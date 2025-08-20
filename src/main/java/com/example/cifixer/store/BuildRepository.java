@@ -1,5 +1,7 @@
 package com.example.cifixer.store;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -72,4 +74,19 @@ public interface BuildRepository extends JpaRepository<Build, Long> {
      */
     @Query(value = "SELECT * FROM builds ORDER BY created_at DESC LIMIT :limit", nativeQuery = true)
     List<Build> findRecentBuilds(@Param("limit") int limit);
+    
+    /**
+     * Find builds by status and created before a specific date.
+     */
+    List<Build> findByStatusAndCreatedAtBefore(BuildStatus status, LocalDateTime createdAt);
+    
+    /**
+     * Find builds by status with pagination.
+     */
+    Page<Build> findByStatus(String status, Pageable pageable);
+    
+    /**
+     * Count builds by status (string version for admin endpoints).
+     */
+    long countByStatus(String status);
 }

@@ -1,0 +1,89 @@
+spring:
+  profiles:
+    active: production
+  
+  datasource:
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: false
+
+# Security configuration for production
+security:
+  ssl:
+    verification:
+      enabled: true
+  webhook:
+    signature:
+      validation:
+        enabled: true
+
+# External API configuration for production
+external:
+  apis:
+    github:
+      timeout:
+        connect: 15000
+        read: 45000
+      retry:
+        max-attempts: 5
+    llm:
+      timeout:
+        connect: 15000
+        read: 180000
+
+# LLM API configuration for production
+llm:
+  api:
+    timeout-seconds: 120
+    max-retries: 5
+
+# Orchestrator configuration for production
+orchestrator:
+  max:
+    concurrent:
+      tasks: 10
+
+# Logging configuration for production
+logging:
+  level:
+    com.example.cifixer: INFO
+    org.springframework.web: WARN
+    org.hibernate.SQL: WARN
+    com.zaxxer.hikari: WARN
+  file:
+    name: /var/log/cifixer/cifixer.log
+    max-size: 500MB
+    max-history: 60
+    total-size-cap: 10GB
+
+# Cleanup configuration for production
+cleanup:
+  retention:
+    days: 3
+  max:
+    directory:
+      size:
+        gb: 50
+  enabled: true
+  dry:
+    run: false
+
+# Monitoring configuration for production
+monitoring:
+  metrics:
+    enabled: true
+  structured-logging:
+    enabled: true
+  correlation-id:
+    enabled: true

@@ -103,12 +103,57 @@ The system is specifically designed for Spring Boot projects:
 - Parses Spring-specific error messages
 - Generates Spring-aware code fixes
 
-## Next Steps
+## Documentation
 
-This is the foundational structure. The next tasks will implement:
-1. Database schema and JPA entities
-2. Webhook API for Jenkins integration
-3. Individual agent implementations
-4. LLM integration for code generation
-5. GitHub API integration for PR creation
-6. Email notifications for stakeholders
+For detailed information about the system, see:
+
+### Setup and Deployment
+- [Deployment Guide](docs/DEPLOYMENT.md) - Complete deployment instructions with Docker
+- [Configuration Examples](docs/CONFIGURATION_EXAMPLES.md) - Environment-specific configurations
+- [Webhook Configuration](docs/WEBHOOK_CONFIGURATION.md) - Jenkins and CI system integration
+
+### Usage and Operations
+- [User Guide](docs/USER_GUIDE.md) - How to use the CI Fixer effectively
+- [Monitoring Guide](docs/MONITORING.md) - System monitoring and metrics
+- [Operational Runbook](docs/OPERATIONAL_RUNBOOK.md) - Day-to-day operations
+
+### Troubleshooting and Security
+- [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
+- [Security Best Practices](docs/SECURITY.md) - Security configuration and best practices
+
+### Technical Reference
+- [Requirements Validation](docs/REQUIREMENTS_VALIDATION.md) - Complete requirements traceability
+
+## Quick Start
+
+1. **Clone and configure:**
+   ```bash
+   git clone <repository-url>
+   cd multi-agent-ci-fixer
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+2. **Deploy with Docker:**
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Verify deployment:**
+   ```bash
+   curl http://localhost:8080/actuator/health
+   ```
+
+4. **Configure webhooks** following the [Webhook Configuration Guide](docs/WEBHOOK_CONFIGURATION.md)
+
+## Features
+
+- ✅ **Automated Build Failure Detection** - Receives Jenkins webhooks on build failures
+- ✅ **Spring-Aware Log Analysis** - Parses Maven/Gradle logs with Spring context understanding
+- ✅ **Intelligent File Ranking** - Identifies relevant source files using stack traces and Spring annotations
+- ✅ **AI-Powered Code Generation** - Uses external OpenAI-compatible APIs for Spring-aware fixes
+- ✅ **Comprehensive Validation** - Runs Maven/Gradle builds and Spring Boot tests to verify fixes
+- ✅ **GitHub Integration** - Creates pull requests with detailed descriptions and validation results
+- ✅ **Stakeholder Notifications** - Email notifications for successful fixes and manual intervention needs
+- ✅ **Security Best Practices** - HMAC webhook validation, input sanitization, and patch safety checks
+- ✅ **Production Ready** - Docker deployment, monitoring, logging, and operational procedures

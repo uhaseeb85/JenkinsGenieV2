@@ -1,0 +1,162 @@
+# Production Docker Compose Override
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # Production PostgreSQL configuration
+  postgres:
+    environment:
+      # Use stronger password in production
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # Use named volume with backup strategy
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./docker/init-scripts:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: '1.0'
+        reservations:
+          memory: 512m
+          cpus: '0.5'
+    restart: always
+    # Production PostgreSQL tuning
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+
+
+
+  # Production CI Fixer application configuration
+  ci-fixer:
+    environment:
+      # Production JVM settings
+      JAVA_OPTS: >
+        -Xmx2g
+        -Xms1g
+        -XX:+UseG1GC
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75
+        -XX:+HeapDumpOnOutOfMemoryError
+        -XX:HeapDumpPath=/app/logs/
+        -XX:+UseStringDeduplication
+        -XX:+OptimizeStringConcat
+        -Djava.security.egd=file:/dev/./urandom
+      
+      # Production Spring profiles
+      SPRING_PROFILES_ACTIVE: "prod,docker"
+      
+      # Production logging configuration
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_EXAMPLE_CIFIXER: INFO
+      LOGGING_PATTERN_CONSOLE: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{buildId}] %logger{36} - %msg%n"
+      LOGGING_PATTERN_FILE: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{buildId}] %logger{36} - %msg%n"
+      
+      # Production database settings
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 20
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 5
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: 30000
+      SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT: 600000
+      SPRING_DATASOURCE_HIKARI_MAX_LIFETIME: 1800000
+      
+      # Production security settings
+      CIFIXER_WEBHOOK_SIGNATURE_VALIDATION: true
+      CIFIXER_SSL_VERIFICATION: true
+      CIFIXER_MAX_PATCH_SIZE: 1000
+      CIFIXER_MAX_RETRY_ATTEMPTS: 3
+      
+      # Production operational settings
+      CIFIXER_CLEANUP_ENABLED: true
+      CIFIXER_CLEANUP_RETENTION_HOURS: 48
+      CIFIXER_TASK_TIMEOUT_MINUTES: 30
+      CIFIXER_MAX_CONCURRENT_TASKS: 5
+      
+      # Production API settings
+      LLM_API_TIMEOUT_SECONDS: 120
+      LLM_API_MAX_TOKENS: 4000
+      LLM_API_TEMPERATURE: 0.1
+      LLM_API_MAX_RETRIES: 5
+      
+      # Production monitoring
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,metrics,prometheus"
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: "when-authorized"
+      MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED: true
+    
+    volumes:
+      # Production volume mounts
+      - work_prod_data:/app/work
+      - app_prod_logs:/app/logs
+    
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+          cpus: '2.0'
+        reservations:
+          memory: 1g
+          cpus: '1.0'
+    
+    restart: always
+    
+    # Production health check with longer intervals
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+
+  # Remove MailHog in production (use external SMTP)
+  mailhog:
+    profiles:
+      - dev
+      - test
+
+# Production volumes with backup labels
+volumes:
+  postgres_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ci-fixer/data/postgres
+    labels:
+      - "backup.enable=true"
+      - "backup.schedule=daily"
+  
+  work_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ci-fixer/data/work
+    labels:
+      - "cleanup.enable=true"
+      - "cleanup.retention=7d"
+  
+  app_prod_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ci-fixer/logs
+    labels:
+      - "logrotate.enable=true"
+      - "logrotate.size=100M"
+
+# Production network configuration
+networks:
+  ci-fixer-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

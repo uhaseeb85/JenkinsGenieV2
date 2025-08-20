@@ -1,5 +1,6 @@
 package com.example.cifixer.web;
 
+import com.example.cifixer.core.InputValidator;
 import com.example.cifixer.core.Task;
 import com.example.cifixer.core.TaskQueue;
 import com.example.cifixer.core.TaskType;
@@ -7,6 +8,7 @@ import com.example.cifixer.store.Build;
 import com.example.cifixer.store.BuildRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -24,13 +26,16 @@ public class WebhookController {
     private static final Logger logger = LoggerFactory.getLogger(WebhookController.class);
     
     private final WebhookValidator webhookValidator;
+    private final InputValidator inputValidator;
     private final BuildRepository buildRepository;
     private final TaskQueue taskQueue;
     
-    public WebhookController(WebhookValidator webhookValidator, 
+    public WebhookController(WebhookValidator webhookValidator,
+                           InputValidator inputValidator,
                            BuildRepository buildRepository, 
                            TaskQueue taskQueue) {
         this.webhookValidator = webhookValidator;
+        this.inputValidator = inputValidator;
         this.buildRepository = buildRepository;
         this.taskQueue = taskQueue;
     }
@@ -47,16 +52,39 @@ public class WebhookController {
             @RequestBody JenkinsWebhookPayload payload,
             @RequestHeader(value = "X-Jenkins-Signature", required = false) String signature) {
         
-        logger.info("Received Jenkins webhook: job={}, build={}, branch={}, commit={}", 
-            payload.getJob(), payload.getBuildNumber(), payload.getBranch(), payload.getCommitSha());
+        String correlationId = "webhook-" + System.currentTimeMillis();
         
         try {
+            MDC.put("correlationId", correlationId);
+            
+            logger.info("Received Jenkins webhook: job={}, build={}, branch={}, commit={}", 
+                payload.getJob(), payload.getBuildNumber(), payload.getBranch(), payload.getCommitSha());
+            
+            // Enhanced input validation
+            InputValidator.ValidationResult inputResult = inputValidator.validateJenkinsPayload(payload);
+            if (!inputResult.isValid()) {
+                logger.warn("Input validation failed: {}", inputResult.getErrorMessage());
+                return ResponseEntity.badRequest()
+                    .body(WebhookResponse.error("Input validation failed: " + inputResult.getErrorMessage()));
+            }
+            
             // Validate the webhook payload and signature
             webhookValidator.validateJenkinsPayload(payload, signature);
+            
+            // Check for duplicate builds
+            if (buildRepository.existsByJobAndBuildNumber(payload.getJob(), payload.getBuildNumber())) {
+                logger.warn("Duplicate build detected: job={}, buildNumber={}", 
+                    payload.getJob(), payload.getBuildNumber());
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(WebhookResponse.error("Build already exists"));
+            }
             
             // Create Build entity
             Build build = createBuildFromPayload(payload);
             build = buildRepository.save(build);
+            
+            // Add build ID to MDC for correlation
+            MDC.put("buildId", String.valueOf(build.getId()));
             
             logger.info("Created build record: id={}, job={}, buildNumber={}", 
                 build.getId(), build.getJob(), build.getBuildNumber());
@@ -84,6 +112,8 @@ public class WebhookController {
             logger.error("Error processing Jenkins webhook", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(WebhookResponse.error("Internal server error"));
+        } finally {
+            MDC.clear();
         }
     }
     

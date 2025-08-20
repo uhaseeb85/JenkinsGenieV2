@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Multi-Agent CI Fixer is implemented as a single Spring Boot 2.7.x application with modular agent-based architecture, specifically designed to fix Java Spring projects. The system uses PostgreSQL for persistence, integrates with a local LLM for Spring-aware code generation, and orchestrates multiple specialized agents to handle different aspects of Maven/Gradle build failures in Spring applications. The design prioritizes simplicity, Java 8 compatibility, Spring best practices, and self-hosted deployment.
+The Multi-Agent CI Fixer is implemented as a single Spring Boot 2.7.x application with modular agent-based architecture, specifically designed to fix Java Spring projects. The system uses PostgreSQL for persistence, integrates with external OpenAI-compatible APIs (OpenRouter, OpenAI, Anthropic, etc.) for Spring-aware code generation, and orchestrates multiple specialized agents to handle different aspects of Maven/Gradle build failures in Spring applications. The design prioritizes simplicity, Java 8 compatibility, Spring best practices, and self-hosted deployment.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ graph TB
     subgraph "External Systems"
         J[Jenkins] --> WH[Webhook API]
         GH[GitHub API]
-        LLM[Local LLM<br/>Ollama/LM Studio]
+        LLM[OpenAI-Compatible APIs<br/>OpenRouter/OpenAI/Anthropic]
         SMTP[SMTP Server]
     end
     
@@ -58,7 +58,7 @@ The system implements a multi-agent pattern where each agent is responsible for 
 - **Planner Agent**: Analyzes Maven/Gradle build logs and creates structured fix plans for Spring projects
 - **Repo Agent**: Handles Git operations and Maven/Gradle project structure analysis
 - **Retriever Agent**: Identifies and ranks candidate Java files, Spring configurations, and build files
-- **Code-Fix Agent**: Generates and applies Spring-aware code patches using LLM with Java/Spring context
+- **Code-Fix Agent**: Generates and applies Spring-aware code patches using external OpenAI-compatible APIs with Java/Spring context
 - **Validator Agent**: Runs Maven/Gradle compilation and Spring Boot tests to validate fixes
 - **PR Agent**: Creates GitHub pull requests with generated fixes
 - **Notification Agent**: Sends email notifications to stakeholders
@@ -180,9 +180,9 @@ public class PlannerAgent implements Agent<PlanPayload> {
 public class CodeFixAgent implements Agent<PatchPayload> {
     
     public TaskResult handle(Task task, PatchPayload payload) {
-        // Build context window for LLM
+        // Build context window for external API
         // Generate prompt with file content and error info
-        // Call LLM API and validate response format
+        // Call OpenAI-compatible API and validate response format
         // Apply unified diff using JGit
         // Create VALIDATE task
     }
@@ -226,17 +226,46 @@ public class CodeFixAgent implements Agent<PatchPayload> {
 }
 ```
 
-### LLM Integration
+### External API Integration
 
 ```java
 @Component
-public class LlmClient {
+public class OpenAiCompatibleClient {
+    
+    @Value("${llm.api.base-url}")
+    private String apiBaseUrl;
+    
+    @Value("${llm.api.key}")
+    private String apiKey;
+    
+    @Value("${llm.api.model}")
+    private String model;
     
     public LlmResponse generatePatch(String prompt) {
-        // HTTP call to local LLM endpoint
+        // HTTP call to OpenAI-compatible API endpoint
+        // Support multiple providers: OpenRouter, OpenAI, Anthropic, etc.
         // Validate response contains unified diff
         // Parse JSON response with error handling
         // Apply token limits and safety checks
+        // Handle rate limiting and API errors
+    }
+    
+    private ChatCompletionRequest buildRequest(String prompt) {
+        return ChatCompletionRequest.builder()
+            .model(model)
+            .messages(List.of(
+                ChatMessage.builder()
+                    .role("system")
+                    .content("You are a senior Java Spring Boot developer...")
+                    .build(),
+                ChatMessage.builder()
+                    .role("user")
+                    .content(prompt)
+                    .build()
+            ))
+            .maxTokens(4000)
+            .temperature(0.1)
+            .build();
     }
     
     private boolean isValidUnifiedDiff(String diff) {
@@ -643,7 +672,7 @@ class EndToEndTest {
 
 ### Memory Management
 
-- Limit LLM context window size to prevent OOM
+- Limit API request context window size to stay within token limits
 - Stream large log files instead of loading entirely into memory
 - Use lazy loading for JPA relationships
 - Implement cleanup jobs for old working directories
@@ -680,7 +709,7 @@ public class SecretManager {
 
 - Validate all webhook inputs
 - Sanitize file paths to prevent directory traversal
-- Limit LLM prompt size to prevent injection attacks
+- Limit API prompt size to prevent injection attacks and stay within token limits
 - Validate unified diff format before application
 
 ### Network Security

@@ -3,15 +3,21 @@ spring:
     name: multi-agent-ci-fixer
   
   datasource:
-    url: jdbc:postgresql://localhost:5432/cifixer
-    username: cifixer
-    password: cifixer
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/cifixer}
+    username: ${DATABASE_USERNAME:cifixer}
+    password: ${DATABASE_PASSWORD:cifixer}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DATABASE_MAX_POOL_SIZE:10}
+      minimum-idle: ${DATABASE_MIN_IDLE:2}
+      connection-timeout: ${DATABASE_CONNECTION_TIMEOUT:30000}
+      idle-timeout: ${DATABASE_IDLE_TIMEOUT:600000}
+      max-lifetime: ${DATABASE_MAX_LIFETIME:1800000}
   
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: false
+    show-sql: ${JPA_SHOW_SQL:false}
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQL10Dialect
@@ -22,13 +28,74 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
-# Webhook configuration
-webhook:
-  jenkins:
-    secret: ${JENKINS_WEBHOOK_SECRET:}
-  signature:
-    validation:
-      enabled: ${WEBHOOK_SIGNATURE_VALIDATION_ENABLED:false}
+# Security configuration
+security:
+  tokens:
+    github:
+      token: ${JENKINS_GENIE_GITHUB_TOKEN:${GITHUB_TOKEN:}}
+    jenkins:
+      token: ${JENKINS_TOKEN:}
+  ssl:
+    verification:
+      enabled: ${SSL_VERIFICATION_ENABLED:true}
+    trust-store:
+      path: ${SSL_TRUST_STORE_PATH:}
+      password: ${SSL_TRUST_STORE_PASSWORD:}
+  webhook:
+    signature:
+      validation:
+        enabled: ${WEBHOOK_SIGNATURE_VALIDATION_ENABLED:false}
+      algorithm: ${WEBHOOK_SIGNATURE_ALGORITHM:HmacSHA256}
+    secrets:
+      jenkins: ${JENKINS_WEBHOOK_SECRET:}
+      github: ${GITHUB_WEBHOOK_SECRET:}
+
+# GitHub configuration
+github:
+  token: ${JENKINS_GENIE_GITHUB_TOKEN:${GITHUB_TOKEN:}}
+  owner: ${JENKINS_GENIE_GITHUB_OWNER:}
+  api:
+    base-url: ${GITHUB_API_BASE_URL:https://api.github.com}
+
+# External API configuration
+external:
+  apis:
+    github:
+      base-url: ${GITHUB_API_BASE_URL:https://api.github.com}
+      timeout:
+        connect: ${GITHUB_API_CONNECT_TIMEOUT:10000}
+        read: ${GITHUB_API_READ_TIMEOUT:30000}
+      retry:
+        max-attempts: ${GITHUB_API_MAX_RETRY_ATTEMPTS:3}
+        backoff-multiplier: ${GITHUB_API_BACKOFF_MULTIPLIER:2}
+    llm:
+      base-url: ${LLM_API_BASE_URL:https://openrouter.ai/api/v1}
+      timeout:
+        connect: ${LLM_API_CONNECT_TIMEOUT:10000}
+        read: ${LLM_API_READ_TIMEOUT:120000}
+      model: ${LLM_API_MODEL:anthropic/claude-3.5-sonnet}
+      max-tokens: ${LLM_API_MAX_TOKENS:4000}
+
+# LLM API configuration
+llm:
+  api:
+    base-url: ${LLM_API_BASE_URL:https://openrouter.ai/api/v1}
+    key: ${JENKINS_GENIE_LLM_API_KEY:${LLM_API_KEY:}}
+    model: ${JENKINS_GENIE_LLM_MODEL:${LLM_API_MODEL:anthropic/claude-3.5-sonnet}}
+    provider: ${JENKINS_GENIE_LLM_PROVIDER:${LLM_API_PROVIDER:openrouter}}
+    max-tokens: ${LLM_API_MAX_TOKENS:4000}
+    temperature: ${LLM_API_TEMPERATURE:0.1}
+    timeout-seconds: ${LLM_API_TIMEOUT_SECONDS:60}
+    max-retries: ${LLM_API_MAX_RETRIES:3}
+
+# Default project configuration
+project:
+  default:
+    name: ${JENKINS_GENIE_DEFAULT_PROJECT_NAME:}
+    repository: ${JENKINS_GENIE_DEFAULT_PROJECT_REPO:}
+    branch: ${JENKINS_GENIE_DEFAULT_PROJECT_BRANCH:main}
+    jenkins:
+      url: ${JENKINS_GENIE_DEFAULT_PROJECT_JENKINS_URL:http://localhost:8080}
 
 # Orchestrator configuration
 orchestrator:
@@ -44,18 +111,80 @@ logging:
     com.example.cifixer: INFO
     org.springframework.web: INFO
     org.hibernate.SQL: WARN
+    com.zaxxer.hikari: INFO
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] %logger{36} - %msg%n"
+  file:
+    name: ${LOG_FILE_PATH:logs/cifixer.log}
+    max-size: ${LOG_FILE_MAX_SIZE:100MB}
+    max-history: ${LOG_FILE_MAX_HISTORY:30}
+    total-size-cap: ${LOG_FILE_TOTAL_SIZE_CAP:1GB}
 
 # Management endpoints
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus,loggers,env,configprops
+      base-path: /actuator
   endpoint:
     health:
-      show-details: when-authorized
+      show-details: always
+      show-components: always
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        cifixer.task.processing.duration: true
+        cifixer.build.processing.duration: true
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99
+        cifixer.task.processing.duration: 0.5, 0.95, 0.99
+        cifixer.build.processing.duration: 0.5, 0.95, 0.99
+
+# Retry configuration
+retry:
+  base:
+    delay:
+      seconds: ${RETRY_BASE_DELAY_SECONDS:2}
+  max:
+    delay:
+      seconds: ${RETRY_MAX_DELAY_SECONDS:300}
+  jitter:
+    enabled: ${RETRY_JITTER_ENABLED:true}
+    factor: ${RETRY_JITTER_FACTOR:0.1}
+
+# Cleanup configuration
+cleanup:
+  working:
+    directory:
+      base: ${CLEANUP_WORKING_DIRECTORY_BASE:/work}
+  retention:
+    days: ${CLEANUP_RETENTION_DAYS:7}
+  max:
+    directory:
+      size:
+        gb: ${CLEANUP_MAX_DIRECTORY_SIZE_GB:10}
+  enabled: ${CLEANUP_ENABLED:true}
+  dry:
+    run: ${CLEANUP_DRY_RUN:false}
+
+# Monitoring configuration
+monitoring:
+  metrics:
+    enabled: ${MONITORING_METRICS_ENABLED:true}
+  structured-logging:
+    enabled: ${MONITORING_STRUCTURED_LOGGING_ENABLED:true}
+  correlation-id:
+    enabled: ${MONITORING_CORRELATION_ID_ENABLED:true}
 
 # Server configuration
 server:

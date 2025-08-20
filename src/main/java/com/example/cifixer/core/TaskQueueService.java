@@ -105,6 +105,12 @@ public class TaskQueueService implements TaskQueue {
         return task.getAttempt() < task.getMaxAttempts();
     }
     
+    @Override
+    public Task findById(Long taskId) {
+        Optional<Task> taskOpt = taskRepository.findById(taskId);
+        return taskOpt.orElse(null);
+    }
+    
     /**
      * Requeues a failed task for retry if it hasn't exceeded max attempts.
      *

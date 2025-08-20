@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The Multi-Agent CI Fixer is an automated system specifically designed for Java Spring projects that triages Jenkins build failures, analyzes Maven/Gradle build logs, generates Spring-aware code fixes using a local LLM, validates the fixes, and creates GitHub pull requests with notifications to stakeholders. The system is designed to be self-hosted with minimal dependencies, using Java 8 compatibility and Docker for deployment.
+The Multi-Agent CI Fixer is an automated system specifically designed for Java Spring projects that triages Jenkins build failures, analyzes Maven/Gradle build logs, generates Spring-aware code fixes using external OpenAI-compatible APIs (OpenRouter, OpenAI, etc.), validates the fixes, and creates GitHub pull requests with notifications to stakeholders. The system is designed to be self-hosted with minimal dependencies, using Java 8 compatibility and Docker for deployment.
 
 ## Requirements
 
@@ -45,8 +45,8 @@ The Multi-Agent CI Fixer is an automated system specifically designed for Java S
 
 #### Acceptance Criteria
 
-1. WHEN a patch task is processed THEN the system SHALL send Java source file content, Spring context information, and error context to the local LLM with Spring-specific prompting
-2. WHEN the LLM responds THEN the system SHALL validate that the response contains a proper unified diff format for Java files and follows Spring best practices
+1. WHEN a patch task is processed THEN the system SHALL send Java source file content, Spring context information, and error context to external OpenAI-compatible API with Spring-specific prompting
+2. WHEN the external API responds THEN the system SHALL validate that the response contains a proper unified diff format for Java files and follows Spring best practices
 3. WHEN a valid diff is received THEN the system SHALL apply the patch using JGit to the working Spring project repository
 4. IF the patch fails to apply THEN the system SHALL retry with updated Spring context and dependency information up to 3 times per file
 5. WHEN patches are applied THEN the system SHALL commit changes with descriptive commit messages referencing Spring components and Maven/Gradle modules
@@ -92,7 +92,7 @@ The Multi-Agent CI Fixer is an automated system specifically designed for Java S
 #### Acceptance Criteria
 
 1. WHEN the system is deployed THEN it SHALL run as a single Spring Boot application with Java 8 compatibility
-2. WHEN deployed THEN the system SHALL use PostgreSQL for persistence and local LLM for code generation
+2. WHEN deployed THEN the system SHALL use PostgreSQL for persistence and external OpenAI-compatible APIs for code generation
 3. WHEN configured THEN the system SHALL support environment variable configuration for tokens and endpoints
 4. WHEN running THEN the system SHALL expose health check endpoints and metrics for monitoring
 
@@ -115,6 +115,6 @@ The Multi-Agent CI Fixer is an automated system specifically designed for Java S
 
 1. WHEN processing tasks THEN the system SHALL implement retry logic with exponential backoff for transient failures
 2. WHEN repositories are large THEN the system SHALL limit log parsing to the last 300 lines and failing modules
-3. WHEN LLM responses are invalid THEN the system SHALL validate output format and request regeneration
+3. WHEN external API responses are invalid THEN the system SHALL validate output format and request regeneration
 4. WHEN multiple builds fail simultaneously THEN the system SHALL process them independently without interference
 5. IF system resources are constrained THEN the system SHALL queue tasks and process them sequentially

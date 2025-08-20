@@ -9,6 +9,7 @@ import com.example.cifixer.store.NotificationType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -29,6 +30,7 @@ public class Orchestrator {
     
     private final TaskQueue taskQueue;
     private final BuildRepository buildRepository;
+    private final RetryHandler retryHandler;
     
     @Autowired
     private NotificationAgent notificationAgent;
@@ -45,9 +47,10 @@ public class Orchestrator {
     // Track currently processing tasks to avoid overloading
     private final Map<String, Integer> activeTaskCounts = new HashMap<>();
     
-    public Orchestrator(TaskQueue taskQueue, BuildRepository buildRepository) {
+    public Orchestrator(TaskQueue taskQueue, BuildRepository buildRepository, RetryHandler retryHandler) {
         this.taskQueue = taskQueue;
         this.buildRepository = buildRepository;
+        this.retryHandler = retryHandler;
         
         // Initialize counters for each task type
         for (TaskType taskType : TaskType.values()) {
@@ -112,10 +115,17 @@ public class Orchestrator {
      * @param task The task to dispatch
      */
     private void dispatchTask(Task task) {
-        logger.info("Dispatching task: id={}, type={}, buildId={}", 
-            task.getId(), task.getType(), task.getBuild().getId());
+        String correlationId = generateCorrelationId(task);
         
         try {
+            MDC.put("correlationId", correlationId);
+            MDC.put("taskId", String.valueOf(task.getId()));
+            MDC.put("buildId", String.valueOf(task.getBuild().getId()));
+            MDC.put("taskType", task.getType().name());
+            
+            logger.info("Dispatching task: id={}, type={}, buildId={}, attempt={}", 
+                task.getId(), task.getType(), task.getBuild().getId(), task.getAttempt());
+            
             // Placeholder: In future tasks, this will call actual agent implementations
             switch (task.getType()) {
                 case PLAN:
@@ -145,13 +155,15 @@ public class Orchestrator {
                         "Unknown task type: " + task.getType());
             }
         } catch (Exception e) {
-            logger.error("Error dispatching task: id={}", task.getId(), e);
-            handleTaskFailure(task, e);
+            logger.error("Error dispatching task: id={}, type={}, attempt={}", 
+                task.getId(), task.getType(), task.getAttempt(), e);
+            retryHandler.handleTaskFailure(task, e);
         } finally {
             // Decrement active task count
             String agentType = task.getType().name();
             int currentCount = activeTaskCounts.getOrDefault(agentType, 0);
             activeTaskCounts.put(agentType, Math.max(0, currentCount - 1));
+            MDC.clear();
         }
     }
     
@@ -288,36 +300,11 @@ public class Orchestrator {
     }
     
     /**
-     * Handles task failures with retry logic.
-     *
-     * @param task The failed task
-     * @param error The error that occurred
+     * Generates a correlation ID for tracking related operations.
      */
-    private void handleTaskFailure(Task task, Exception error) {
-        logger.error("Task failed: id={}, type={}, attempt={}", 
-            task.getId(), task.getType(), task.getAttempt(), error);
-        
-        String errorMessage = error.getMessage();
-        if (errorMessage == null) {
-            errorMessage = error.getClass().getSimpleName();
-        }
-        
-        // Check if task should be retried
-        if (task.getAttempt() < task.getMaxAttempts()) {
-            taskQueue.updateStatus(task.getId(), TaskStatus.RETRY, errorMessage);
-            logger.info("Task queued for retry: id={}, attempt={}/{}", 
-                task.getId(), task.getAttempt(), task.getMaxAttempts());
-        } else {
-            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, errorMessage);
-            
-            // Mark build as failed if this was the last attempt
-            Build build = task.getBuild();
-            build.setStatus(BuildStatus.FAILED);
-            buildRepository.save(build);
-            
-            logger.warn("Task failed permanently: id={}, buildId={}", 
-                task.getId(), build.getId());
-        }
+    private String generateCorrelationId(Task task) {
+        return String.format("orch-%d-%d-%d", 
+            task.getBuild().getId(), task.getId(), System.currentTimeMillis());
     }
     
     /**

@@ -39,4 +39,12 @@ public interface TaskQueue {
      * @param errorMessage The error message to store
      */
     void updateStatus(Long taskId, TaskStatus status, String errorMessage);
+    
+    /**
+     * Finds a task by its ID.
+     *
+     * @param taskId The ID of the task to find
+     * @return The task, or null if not found
+     */
+    Task findById(Long taskId);
 }

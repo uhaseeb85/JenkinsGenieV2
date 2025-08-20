@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: ci-fixer-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cifixer}
+      POSTGRES_USER: ${POSTGRES_USER:-cifixer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cifixer123}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cifixer} -d ${POSTGRES_DB:-cifixer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ci-fixer-network
+
+
+
+  # MailHog for email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: ci-fixer-mailhog
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"  # SMTP port
+      - "${MAILHOG_WEB_PORT:-8025}:8025"   # Web UI port
+    environment:
+      MH_STORAGE: maildir
+      MH_MAILDIR_PATH: /maildir
+    volumes:
+      - mailhog_data:/maildir
+    networks:
+      - ci-fixer-network
+
+  # CI Fixer Application
+  ci-fixer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ci-fixer-app
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      # Database configuration
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-cifixer}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-cifixer}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-cifixer123}
+      
+      # External API configuration
+      LLM_API_BASE_URL: ${LLM_API_BASE_URL:-https://openrouter.ai/api/v1}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_API_MODEL: ${LLM_API_MODEL:-anthropic/claude-3.5-sonnet}
+      LLM_API_PROVIDER: ${LLM_API_PROVIDER:-openrouter}
+      
+      # Email configuration
+      SPRING_MAIL_HOST: mailhog
+      SPRING_MAIL_PORT: 1025
+      SPRING_MAIL_USERNAME: ""
+      SPRING_MAIL_PASSWORD: ""
+      
+      # GitHub configuration
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_BASE_URL: ${GITHUB_BASE_URL:-https://api.github.com}
+      
+      # Jenkins configuration
+      JENKINS_WEBHOOK_SECRET: ${JENKINS_WEBHOOK_SECRET}
+      
+      # Application configuration
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+      LOGGING_LEVEL_COM_EXAMPLE_CIFIXER: ${LOG_LEVEL:-INFO}
+      
+      # Working directory configuration
+      CIFIXER_WORK_DIR: /app/work
+      CIFIXER_CLEANUP_ENABLED: ${CLEANUP_ENABLED:-true}
+      CIFIXER_CLEANUP_RETENTION_HOURS: ${CLEANUP_RETENTION_HOURS:-24}
+      
+      # Security configuration
+      CIFIXER_WEBHOOK_SIGNATURE_VALIDATION: ${WEBHOOK_SIGNATURE_VALIDATION:-true}
+      CIFIXER_SSL_VERIFICATION: ${SSL_VERIFICATION:-true}
+    volumes:
+      - work_data:/app/work
+      - app_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - ci-fixer-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  mailhog_data:
+    driver: local
+  work_data:
+    driver: local
+  app_logs:
+    driver: local
+
+networks:
+  ci-fixer-network:
+    driver: bridge
