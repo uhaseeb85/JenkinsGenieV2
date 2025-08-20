@@ -108,7 +108,8 @@ orchestrator:
 # Logging configuration
 logging:
   level:
-    com.example.cifixer: INFO
+    com.example.cifixer: DEBUG
+    com.example.cifixer.web.WebhookController: DEBUG
     org.springframework.web: INFO
     org.hibernate.SQL: WARN
     com.zaxxer.hikari: INFO

@@ -57,38 +57,44 @@ public class InputValidator {
         logger.debug("Validating Jenkins webhook payload");
         
         // Validate job name
-        ValidationResult jobResult = validateJobName(payload.getJob());
+        String jobName = payload.getJob();
+        ValidationResult jobResult = validateJobName(jobName);
         if (!jobResult.isValid()) {
             return jobResult;
         }
         
         // Validate build number
-        ValidationResult buildResult = validateBuildNumber(payload.getBuildNumber());
+        Integer buildNumber = payload.getBuildNumber();
+        ValidationResult buildResult = validateBuildNumber(buildNumber);
         if (!buildResult.isValid()) {
             return buildResult;
         }
         
         // Validate branch name
-        ValidationResult branchResult = validateBranchName(payload.getBranch());
+        String branchName = payload.getBranch();
+        ValidationResult branchResult = validateBranchName(branchName);
         if (!branchResult.isValid()) {
             return branchResult;
         }
         
         // Validate repository URL
-        ValidationResult repoResult = validateRepositoryUrl(payload.getRepoUrl());
+        String repoUrl = payload.getRepoUrl();
+        ValidationResult repoResult = validateRepositoryUrl(repoUrl);
         if (!repoResult.isValid()) {
             return repoResult;
         }
         
         // Validate commit SHA
-        ValidationResult commitResult = validateCommitSha(payload.getCommitSha());
+        String commitSha = payload.getCommitSha();
+        ValidationResult commitResult = validateCommitSha(commitSha);
         if (!commitResult.isValid()) {
             return commitResult;
         }
         
         // Validate build logs if present
-        if (payload.getBuildLogs() != null) {
-            ValidationResult logsResult = validateBuildLogs(payload.getBuildLogs());
+        String buildLogs = payload.getBuildLogs();
+        if (buildLogs != null) {
+            ValidationResult logsResult = validateBuildLogs(buildLogs);
             if (!logsResult.isValid()) {
                 return logsResult;
             }

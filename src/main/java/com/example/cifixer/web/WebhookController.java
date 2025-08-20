@@ -6,6 +6,7 @@ import com.example.cifixer.core.TaskQueue;
 import com.example.cifixer.core.TaskType;
 import com.example.cifixer.store.Build;
 import com.example.cifixer.store.BuildRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -13,6 +14,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletRequest;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -20,10 +25,11 @@ import java.util.Map;
  * REST controller for handling webhook notifications from CI systems.
  */
 @RestController
-@RequestMapping("/webhooks")
+@RequestMapping("/webhook")
 public class WebhookController {
     
     private static final Logger logger = LoggerFactory.getLogger(WebhookController.class);
+    private final ObjectMapper objectMapper = new ObjectMapper();
     
     private final WebhookValidator webhookValidator;
     private final InputValidator inputValidator;
@@ -50,15 +56,61 @@ public class WebhookController {
     @PostMapping("/jenkins")
     public ResponseEntity<WebhookResponse> handleJenkinsFailure(
             @RequestBody JenkinsWebhookPayload payload,
-            @RequestHeader(value = "X-Jenkins-Signature", required = false) String signature) {
+            @RequestHeader(value = "X-Jenkins-Signature", required = false) String signature,
+            HttpServletRequest request) throws IOException {
         
         String correlationId = "webhook-" + System.currentTimeMillis();
         
         try {
             MDC.put("correlationId", correlationId);
             
-            logger.info("Received Jenkins webhook: job={}, build={}, branch={}, commit={}", 
+            // Log the entire payload for debugging
+            try {
+                logger.info("Jenkins webhook payload: {}", objectMapper.writeValueAsString(payload));
+            } catch (Exception e) {
+                logger.warn("Failed to serialize Jenkins webhook payload: {}", e.getMessage());
+            }
+            
+            // Check for null or empty payload
+            if (payload == null) {
+                logger.warn("Received null Jenkins webhook payload");
+                return ResponseEntity.badRequest()
+                    .body(WebhookResponse.error("Webhook payload is null"));
+            }
+            
+            logger.info("Received Jenkins webhook: job={}, build={}, branch={}, commit={}",
                 payload.getJob(), payload.getBuildNumber(), payload.getBranch(), payload.getCommitSha());
+            
+            // Log additional debugging information
+            logger.debug("Full payload details: jobName={}, displayName={}, fullDisplayName={}, url={}",
+                payload.getJobName(), payload.getDisplayName(), payload.getFullDisplayName(), payload.getUrl());
+            
+            if (payload.getBuild() != null) {
+                logger.debug("Build details: number={}, status={}, result={}, url={}",
+                    payload.getBuild().getNumber(), payload.getBuild().getStatus(),
+                    payload.getBuild().getResult(), payload.getBuild().getUrl());
+                
+                if (payload.getBuild().getScm() != null) {
+                    JenkinsWebhookPayload.BuildData.ScmData scm = payload.getBuild().getScm();
+                    logger.debug("SCM details: branch={}, commit={}, commitId={}, message={}, author={}",
+                        scm.getBranch(), scm.getCommit(), scm.getCommitId(),
+                        scm.getMessage(), scm.getAuthor());
+                }
+                
+                if (payload.getBuild().getArtifacts() != null) {
+                    logger.debug("Artifacts count: {}", payload.getBuild().getArtifactsList().size());
+                }
+                
+                if (payload.getBuild().getCauses() != null) {
+                    logger.debug("Causes count: {}", payload.getBuild().getCauses().size());
+                }
+                
+                if (payload.getBuild().getParameters() != null) {
+                    logger.debug("Parameters count: {}", payload.getBuild().getParameters().size());
+                }
+            } else {
+                logger.warn("Build data is null in webhook payload");
+            }
             
             // Enhanced input validation
             InputValidator.ValidationResult inputResult = inputValidator.validateJenkinsPayload(payload);
@@ -69,7 +121,13 @@ public class WebhookController {
             }
             
             // Validate the webhook payload and signature
-            webhookValidator.validateJenkinsPayload(payload, signature);
+            // Read raw payload for signature validation
+            String rawPayload = getRequestBody(request);
+            
+            // Log the entire request for debugging purposes
+            logFullRequest(request, rawPayload);
+            
+            webhookValidator.validateJenkinsPayload(rawPayload, signature, payload);
             
             // Check for duplicate builds
             if (buildRepository.existsByJobAndBuildNumber(payload.getJob(), payload.getBuildNumber())) {
@@ -138,17 +196,32 @@ public class WebhookController {
      */
     private Build createBuildFromPayload(JenkinsWebhookPayload payload) {
         Build build = new Build(
-            payload.getJob(),
-            payload.getBuildNumber(),
-            payload.getBranch(),
-            payload.getRepoUrl(),
-            payload.getCommitSha()
+            payload.extractJobName(),
+            payload.extractBuildNumber(),
+            payload.extractBranchName(),
+            payload.extractRepoUrl(),
+            payload.extractCommitSha()
         );
         
         // Store the full payload as metadata
         Map<String, Object> payloadMap = new HashMap<>();
-        payloadMap.put("buildLogs", payload.getBuildLogs());
-        payloadMap.put("metadata", payload.getMetadata());
+        payloadMap.put("buildLogs", payload.extractBuildLogs());
+        
+        // Add SCM data to metadata
+        if (payload.getBuild() != null && payload.getBuild().getScm() != null) {
+            JenkinsWebhookPayload.BuildData.ScmData scm = payload.getBuild().getScm();
+            Map<String, Object> scmMap = new HashMap<>();
+            scmMap.put("branch", scm.getBranch());
+            scmMap.put("commit", scm.getCommit());
+            scmMap.put("commitId", scm.getCommitId());
+            scmMap.put("message", scm.getMessage());
+            scmMap.put("commitMessage", scm.getCommitMessage());
+            scmMap.put("author", scm.getAuthor());
+            scmMap.put("authorName", scm.getAuthorName());
+            scmMap.put("authorEmail", scm.getAuthorEmail());
+            payloadMap.put("scm", scmMap);
+        }
+        
         build.setPayload(payloadMap);
         
         return build;
@@ -162,15 +235,70 @@ public class WebhookController {
      */
     private Map<String, Object> createTaskPayload(JenkinsWebhookPayload payload) {
         Map<String, Object> taskPayload = new HashMap<>();
-        taskPayload.put("buildLogs", payload.getBuildLogs());
-        taskPayload.put("repoUrl", payload.getRepoUrl());
-        taskPayload.put("branch", payload.getBranch());
-        taskPayload.put("commitSha", payload.getCommitSha());
+        taskPayload.put("buildLogs", payload.extractBuildLogs());
+        taskPayload.put("repoUrl", payload.extractRepoUrl());
+        taskPayload.put("branch", payload.extractBranchName());
+        taskPayload.put("commitSha", payload.extractCommitSha());
         
-        if (payload.getMetadata() != null) {
-            taskPayload.put("metadata", payload.getMetadata());
+        // Add SCM data to task payload
+        if (payload.getBuild() != null && payload.getBuild().getScm() != null) {
+            JenkinsWebhookPayload.BuildData.ScmData scm = payload.getBuild().getScm();
+            Map<String, Object> scmMap = new HashMap<>();
+            scmMap.put("branch", scm.getBranch());
+            scmMap.put("commit", scm.getCommit());
+            scmMap.put("commitId", scm.getCommitId());
+            scmMap.put("message", scm.getMessage());
+            scmMap.put("commitMessage", scm.getCommitMessage());
+            scmMap.put("author", scm.getAuthor());
+            scmMap.put("authorName", scm.getAuthorName());
+            scmMap.put("authorEmail", scm.getAuthorEmail());
+            taskPayload.put("scm", scmMap);
         }
         
         return taskPayload;
+    }
+    
+    /**
+     * Logs the full request including headers and body for debugging purposes.
+     *
+     * @param request The HttpServletRequest object
+     * @param rawPayload The raw request body
+     */
+    private void logFullRequest(HttpServletRequest request, String rawPayload) {
+        try {
+            // Log headers
+            logger.info("=== Webhook Request Headers ===");
+            Enumeration<String> headerNames = request.getHeaderNames();
+            while (headerNames.hasMoreElements()) {
+                String headerName = headerNames.nextElement();
+                String headerValue = request.getHeader(headerName);
+                logger.info("{}: {}", headerName, headerValue);
+            }
+            
+            // Log request body
+            logger.info("=== Webhook Request Body ===");
+            logger.info("{}", rawPayload);
+            logger.info("=== End of Webhook Request ===");
+        } catch (Exception e) {
+            logger.error("Error logging full request", e);
+        }
+    }
+    
+    /**
+     * Reads the request body from the HttpServletRequest.
+     *
+     * @param request The HttpServletRequest object
+     * @return The request body as a string
+     * @throws IOException If an I/O error occurs
+     */
+    private String getRequestBody(HttpServletRequest request) throws IOException {
+        StringBuilder body = new StringBuilder();
+        String line;
+        try (BufferedReader reader = request.getReader()) {
+            while ((line = reader.readLine()) != null) {
+                body.append(line);
+            }
+        }
+        return body.toString();
     }
 }

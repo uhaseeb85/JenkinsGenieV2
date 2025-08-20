@@ -61,6 +61,50 @@ public class WebhookValidator {
     }
     
     /**
+     * Validates Jenkins webhook payload and signature using raw payload.
+     *
+     * @param rawPayload The raw webhook payload as string
+     * @param signature The signature header (optional)
+     * @param jenkinsWebhookPayload The parsed webhook payload
+     * @throws ValidationException if validation fails
+     */
+    public void validateJenkinsPayload(String rawPayload, String signature, JenkinsWebhookPayload jenkinsWebhookPayload) {
+        // Validate required fields
+        String jobName = jenkinsWebhookPayload.getJob();
+        if (jobName == null || jobName.trim().isEmpty()) {
+            throw new ValidationException("Job name is required");
+        }
+        
+        Integer buildNumber = jenkinsWebhookPayload.getBuildNumber();
+        if (buildNumber == null || buildNumber <= 0) {
+            throw new ValidationException("Build number is required and must be positive");
+        }
+        
+        String branch = jenkinsWebhookPayload.getBranch();
+        if (branch == null || branch.trim().isEmpty()) {
+            throw new ValidationException("Branch is required");
+        }
+        
+        String repoUrl = jenkinsWebhookPayload.getRepoUrl();
+        if (repoUrl == null || repoUrl.trim().isEmpty()) {
+            throw new ValidationException("Repository URL is required");
+        }
+        
+        String commitSha = jenkinsWebhookPayload.getCommitSha();
+        if (commitSha == null || commitSha.trim().isEmpty()) {
+            throw new ValidationException("Commit SHA is required");
+        }
+        
+        // Validate signature if enabled and secret is configured
+        String jenkinsSecret = secretManager.getJenkinsWebhookSecret();
+        if (signatureValidationEnabled && StringUtils.hasText(jenkinsSecret)) {
+            validateRawSignature(rawPayload, signature, jenkinsSecret, "jenkins");
+        } else if (signatureValidationEnabled) {
+            logger.warn("Signature validation is enabled but no Jenkins secret is configured");
+        }
+    }
+    
+    /**
      * Validates Jenkins webhook payload and signature.
      *
      * @param payload The webhook payload

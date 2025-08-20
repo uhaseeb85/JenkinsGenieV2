@@ -22,14 +22,12 @@ public class Patch {
     private String filePath;
     
     @Column(name = "unified_diff", nullable = false)
-    @Lob
     private String unifiedDiff;
     
     @Column(nullable = false)
     private Boolean applied = false;
     
     @Column(name = "apply_log")
-    @Lob
     private String applyLog;
     
     @Column(name = "created_at", nullable = false)
