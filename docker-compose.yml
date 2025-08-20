@@ -46,10 +46,10 @@ services:
       dockerfile: Dockerfile
     container_name: ci-fixer-app
     ports:
-      - "${APP_PORT:-8080}:8080"
+      - "${APP_PORT:-8081}:8081"
     environment:
       # Database configuration
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-cifixer}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-cifixer}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-cifixer}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-cifixer123}
       
