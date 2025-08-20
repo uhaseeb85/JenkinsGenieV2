@@ -86,10 +86,17 @@ public class PrAgent implements Agent<PrPayload> {
                     title, description, payload.getBranchName(), payload.getBaseBranch()
             );
             
+            logger.info("Creating PR for build {} with title: {}", build.getId(), title);
+            logger.info("PR details - repository: {}/{}, branch: {}, base: {}",
+                    repoInfo.getOwner(), repoInfo.getName(), payload.getBranchName(), payload.getBaseBranch());
+            logger.info("PR description: {}", description);
+            
             // Create PR via GitHub API
             GitHubPullRequestResponse prResponse = gitHubClient.createPullRequest(
                     repoInfo.getOwner(), repoInfo.getName(), prRequest
             );
+            
+            logger.info("PR creation response: {}", objectMapper.writeValueAsString(prResponse));
             
             // Add labels
             try {

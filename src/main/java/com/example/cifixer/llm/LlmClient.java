@@ -155,7 +155,8 @@ public class LlmClient {
             
             Request httpRequest = requestBuilder.build();
             
-            logger.debug("Calling {} API endpoint: {} with model: {}", apiProvider, endpoint, defaultModel);
+            logger.info("Calling {} API endpoint: {} with model: {}", apiProvider, endpoint, defaultModel);
+            logger.info("LLM Request: {}", requestJson);
             
             try (Response response = httpClient.newCall(httpRequest).execute()) {
                 if (!response.isSuccessful()) {
@@ -169,7 +170,8 @@ public class LlmClient {
                 }
                 
                 String responseJson = response.body().string();
-                logger.debug("API response received, length: {}", responseJson.length());
+                logger.info("LLM Response received, length: {}", responseJson.length());
+                logger.info("LLM Response: {}", responseJson);
                 
                 return parseApiResponse(responseJson);
             }

@@ -388,6 +388,65 @@ The webhook payload must include the following fields:
 }
 ```
 
+### Repository URL Extraction
+
+The `repoUrl` field is critical for the CI Fixer to access your repository. The application attempts to extract this information from multiple sources in the following order:
+
+1. **SCM remoteUrls**: If the webhook payload includes SCM data with `remoteUrls`, the first URL in the list is used
+2. **Build URL**: If available, the application tries to extract the Jenkins base URL from the build URL
+3. **Fallback methods**: Additional extraction methods are used as fallbacks
+
+If the repository URL cannot be extracted, the webhook will be rejected with an error message indicating that the repository URL is required.
+
+#### Jenkins Configuration for Repository URL
+
+To ensure the repository URL is included in the webhook payload, configure your Jenkins job to include the `GIT_URL` environment variable:
+
+```groovy
+// In Jenkins Pipeline
+pipeline {
+    // ... other configuration
+    
+    post {
+        failure {
+            script {
+                def payload = [
+                    job: env.JOB_NAME,
+                    buildNumber: env.BUILD_NUMBER.toInteger(),
+                    branch: env.GIT_BRANCH,
+                    repoUrl: env.GIT_URL,  // This is critical for repository access
+                    commitSha: env.GIT_COMMIT,
+                    // ... other fields
+                ]
+                
+                // Send webhook
+            }
+        }
+    }
+}
+```
+
+#### Troubleshooting Repository URL Issues
+
+If you're experiencing issues with repository URL extraction:
+
+1. **Check Jenkins Environment Variables**: Verify that `GIT_URL` is available in your Jenkins job
+2. **Enable Debug Logging**: Set logging level to DEBUG for webhook processing:
+   ```yaml
+   logging:
+     level:
+       com.example.cifixer.web.JenkinsWebhookPayload: DEBUG
+       com.example.cifixer.web.WebhookController: DEBUG
+   ```
+3. **Verify Webhook Payload**: Check that your webhook payload includes the `repoUrl` field
+4. **Check Jenkins SCM Configuration**: Ensure your Jenkins job is properly configured with SCM settings
+
+Common error messages:
+- "Repository URL is required": The webhook payload doesn't contain repository information
+- "Invalid repository URL format": The provided URL is malformed
+- "Repository host not allowed": The repository URL points to a blocked host (localhost, private IPs)
+```
+
 ### Optional Fields
 
 ```json
@@ -444,6 +503,17 @@ The CI Fixer validates webhook signatures using HMAC-SHA256:
    - Verify required fields are present
    - Check JSON format is valid
    - Ensure logs are properly base64 encoded
+
+4. **Repository URL is required**
+   - Verify that the webhook payload includes a `repoUrl` field
+   - Check that Jenkins is properly configured to provide repository information
+   - Ensure the repository URL is accessible from the CI Fixer environment
+   - Enable debug logging to see detailed information about URL extraction
+
+5. **Repository URL extraction failed**
+   - Check Jenkins job configuration for proper SCM setup
+   - Verify that environment variables like `GIT_URL` are available
+   - Review debug logs for detailed information about the extraction process
 
 ### Debug Mode
 

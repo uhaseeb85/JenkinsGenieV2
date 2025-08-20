@@ -69,30 +69,30 @@ public class WebhookValidator {
      * @throws ValidationException if validation fails
      */
     public void validateJenkinsPayload(String rawPayload, String signature, JenkinsWebhookPayload jenkinsWebhookPayload) {
-        // Validate required fields
-        String jobName = jenkinsWebhookPayload.getJob();
+        // Validate required fields in order of importance
+        String jobName = jenkinsWebhookPayload.extractJobName();
         if (jobName == null || jobName.trim().isEmpty()) {
-            throw new ValidationException("Job name is required");
+            throw new ValidationException("Job name is required in JenkinsWebhookPayload. Please ensure your Jenkins webhook is properly configured to include job information.");
         }
         
-        Integer buildNumber = jenkinsWebhookPayload.getBuildNumber();
+        Integer buildNumber = jenkinsWebhookPayload.extractBuildNumber();
         if (buildNumber == null || buildNumber <= 0) {
-            throw new ValidationException("Build number is required and must be positive");
+            throw new ValidationException("Build number is required and must be positive in JenkinsWebhookPayload. Please ensure your Jenkins webhook is properly configured to include build number information.");
         }
         
-        String branch = jenkinsWebhookPayload.getBranch();
+        String branch = jenkinsWebhookPayload.extractBranchName();
         if (branch == null || branch.trim().isEmpty()) {
-            throw new ValidationException("Branch is required");
+            throw new ValidationException("Branch is required in JenkinsWebhookPayload. Please ensure your Jenkins webhook is properly configured to include branch information.");
         }
         
-        String repoUrl = jenkinsWebhookPayload.getRepoUrl();
-        if (repoUrl == null || repoUrl.trim().isEmpty()) {
-            throw new ValidationException("Repository URL is required");
-        }
-        
-        String commitSha = jenkinsWebhookPayload.getCommitSha();
+        String commitSha = jenkinsWebhookPayload.extractCommitSha();
         if (commitSha == null || commitSha.trim().isEmpty()) {
-            throw new ValidationException("Commit SHA is required");
+            throw new ValidationException("Commit SHA is required in JenkinsWebhookPayload. Please ensure your Jenkins webhook is properly configured to include commit SHA information.");
+        }
+        
+        String repoUrl = jenkinsWebhookPayload.extractRepoUrl();
+        if (repoUrl == null || repoUrl.trim().isEmpty()) {
+            throw new ValidationException("Repository URL is required in JenkinsWebhookPayload. Please ensure your Jenkins webhook is properly configured to include repository information.");
         }
         
         // Validate signature if enabled and secret is configured
@@ -112,7 +112,7 @@ public class WebhookValidator {
      * @throws ValidationException if validation fails
      */
     public void validateJenkinsPayload(JenkinsWebhookPayload payload, String signature) {
-        // Validate required fields
+        // Validate required fields in order of importance
         if (payload.getJob() == null || payload.getJob().trim().isEmpty()) {
             throw new ValidationException("Job name is required");
         }
@@ -125,12 +125,12 @@ public class WebhookValidator {
             throw new ValidationException("Branch is required");
         }
         
-        if (payload.getRepoUrl() == null || payload.getRepoUrl().trim().isEmpty()) {
-            throw new ValidationException("Repository URL is required");
-        }
-        
         if (payload.getCommitSha() == null || payload.getCommitSha().trim().isEmpty()) {
             throw new ValidationException("Commit SHA is required");
+        }
+        
+        if (payload.getRepoUrl() == null || payload.getRepoUrl().trim().isEmpty()) {
+            throw new ValidationException("Repository URL is required in JenkinsWebhookPayload. Please ensure your Jenkins webhook is properly configured to include repository information.");
         }
         
         // Validate signature if enabled and secret is configured

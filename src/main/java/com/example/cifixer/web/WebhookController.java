@@ -57,7 +57,7 @@ public class WebhookController {
     public ResponseEntity<WebhookResponse> handleJenkinsFailure(
             @RequestBody JenkinsWebhookPayload payload,
             @RequestHeader(value = "X-Jenkins-Signature", required = false) String signature,
-            HttpServletRequest request) throws IOException {
+            HttpServletRequest request) {
         
         String correlationId = "webhook-" + System.currentTimeMillis();
         
@@ -78,8 +78,8 @@ public class WebhookController {
                     .body(WebhookResponse.error("Webhook payload is null"));
             }
             
-            logger.info("Received Jenkins webhook: job={}, build={}, branch={}, commit={}",
-                payload.getJob(), payload.getBuildNumber(), payload.getBranch(), payload.getCommitSha());
+            logger.info("Received Jenkins webhook: job={}, build={}, branch={}, commit={}, repoUrl={}",
+                payload.getJob(), payload.getBuildNumber(), payload.getBranch(), payload.getCommitSha(), payload.getRepoUrl());
             
             // Log additional debugging information
             logger.debug("Full payload details: jobName={}, displayName={}, fullDisplayName={}, url={}",
@@ -113,21 +113,21 @@ public class WebhookController {
             }
             
             // Enhanced input validation
+            logger.debug("Starting input validation for Jenkins webhook payload");
             InputValidator.ValidationResult inputResult = inputValidator.validateJenkinsPayload(payload);
             if (!inputResult.isValid()) {
                 logger.warn("Input validation failed: {}", inputResult.getErrorMessage());
                 return ResponseEntity.badRequest()
                     .body(WebhookResponse.error("Input validation failed: " + inputResult.getErrorMessage()));
             }
+            logger.debug("Input validation successful");
+            
+            // Log request headers for debugging purposes
+            logRequestHeaders(request);
             
             // Validate the webhook payload and signature
-            // Read raw payload for signature validation
-            String rawPayload = getRequestBody(request);
-            
-            // Log the entire request for debugging purposes
-            logFullRequest(request, rawPayload);
-            
-            webhookValidator.validateJenkinsPayload(rawPayload, signature, payload);
+            // We don't need to read the raw payload again, as we already have the deserialized payload object
+            webhookValidator.validateJenkinsPayload(payload, signature);
             
             // Check for duplicate builds
             if (buildRepository.existsByJobAndBuildNumber(payload.getJob(), payload.getBuildNumber())) {
@@ -259,12 +259,11 @@ public class WebhookController {
     }
     
     /**
-     * Logs the full request including headers and body for debugging purposes.
+     * Logs the request headers for debugging purposes.
      *
      * @param request The HttpServletRequest object
-     * @param rawPayload The raw request body
      */
-    private void logFullRequest(HttpServletRequest request, String rawPayload) {
+    private void logRequestHeaders(HttpServletRequest request) {
         try {
             // Log headers
             logger.info("=== Webhook Request Headers ===");
@@ -274,31 +273,9 @@ public class WebhookController {
                 String headerValue = request.getHeader(headerName);
                 logger.info("{}: {}", headerName, headerValue);
             }
-            
-            // Log request body
-            logger.info("=== Webhook Request Body ===");
-            logger.info("{}", rawPayload);
-            logger.info("=== End of Webhook Request ===");
+            logger.info("=== End of Webhook Request Headers ===");
         } catch (Exception e) {
-            logger.error("Error logging full request", e);
+            logger.error("Error logging request headers", e);
         }
-    }
-    
-    /**
-     * Reads the request body from the HttpServletRequest.
-     *
-     * @param request The HttpServletRequest object
-     * @return The request body as a string
-     * @throws IOException If an I/O error occurs
-     */
-    private String getRequestBody(HttpServletRequest request) throws IOException {
-        StringBuilder body = new StringBuilder();
-        String line;
-        try (BufferedReader reader = request.getReader()) {
-            while ((line = reader.readLine()) != null) {
-                body.append(line);
-            }
-        }
-        return body.toString();
     }
 }

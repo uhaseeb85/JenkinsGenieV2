@@ -71,11 +71,16 @@ public class GitHubClient {
                         .post(RequestBody.create(requestBody, JSON))
                         .build();
                 
-                logger.info("Creating PR for {}/{} from {} to {} (token: {})", 
+                logger.info("Creating PR for {}/{} from {} to {} (token: {})",
                     owner, repo, request.getHead(), request.getBase(), secretManager.redactToken(githubToken));
+                logger.info("GitHub API Request URL: {}", url);
+                logger.info("GitHub API Request Body: {}", requestBody);
                 
                 try (Response response = httpClient.newCall(httpRequest).execute()) {
                     String responseBody = response.body() != null ? response.body().string() : "";
+                    
+                    logger.info("GitHub API Response Status: {}", response.code());
+                    logger.info("GitHub API Response Body: {}", responseBody);
                     
                     if (!response.isSuccessful()) {
                         handleApiError(response, responseBody);
@@ -83,6 +88,7 @@ public class GitHubClient {
                     
                     GitHubPullRequestResponse prResponse = objectMapper.readValue(responseBody, GitHubPullRequestResponse.class);
                     logger.info("Successfully created PR #{} at {}", prResponse.getNumber(), prResponse.getHtmlUrl());
+                    logger.info("Full PR Response: {}", objectMapper.writeValueAsString(prResponse));
                     
                     return prResponse;
                 }

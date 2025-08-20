@@ -57,42 +57,42 @@ public class InputValidator {
         logger.debug("Validating Jenkins webhook payload");
         
         // Validate job name
-        String jobName = payload.getJob();
+        String jobName = payload.extractJobName();
         ValidationResult jobResult = validateJobName(jobName);
         if (!jobResult.isValid()) {
             return jobResult;
         }
         
         // Validate build number
-        Integer buildNumber = payload.getBuildNumber();
+        Integer buildNumber = payload.extractBuildNumber();
         ValidationResult buildResult = validateBuildNumber(buildNumber);
         if (!buildResult.isValid()) {
             return buildResult;
         }
         
         // Validate branch name
-        String branchName = payload.getBranch();
+        String branchName = payload.extractBranchName();
         ValidationResult branchResult = validateBranchName(branchName);
         if (!branchResult.isValid()) {
             return branchResult;
         }
         
         // Validate repository URL
-        String repoUrl = payload.getRepoUrl();
+        String repoUrl = payload.extractRepoUrl();
         ValidationResult repoResult = validateRepositoryUrl(repoUrl);
         if (!repoResult.isValid()) {
             return repoResult;
         }
         
         // Validate commit SHA
-        String commitSha = payload.getCommitSha();
+        String commitSha = payload.extractCommitSha();
         ValidationResult commitResult = validateCommitSha(commitSha);
         if (!commitResult.isValid()) {
             return commitResult;
         }
         
         // Validate build logs if present
-        String buildLogs = payload.getBuildLogs();
+        String buildLogs = payload.extractBuildLogs();
         if (buildLogs != null) {
             ValidationResult logsResult = validateBuildLogs(buildLogs);
             if (!logsResult.isValid()) {
@@ -109,7 +109,7 @@ public class InputValidator {
      */
     private ValidationResult validateJobName(String jobName) {
         if (!StringUtils.hasText(jobName)) {
-            return ValidationResult.invalid("Job name is required");
+            return ValidationResult.invalid("Job name is required in JenkinsWebhookPayload");
         }
         
         if (jobName.length() > MAX_JOB_NAME_LENGTH) {
@@ -128,7 +128,7 @@ public class InputValidator {
      */
     private ValidationResult validateBuildNumber(Integer buildNumber) {
         if (buildNumber == null) {
-            return ValidationResult.invalid("Build number is required");
+            return ValidationResult.invalid("Build number is required in JenkinsWebhookPayload");
         }
         
         if (buildNumber <= 0) {
@@ -147,7 +147,7 @@ public class InputValidator {
      */
     private ValidationResult validateBranchName(String branchName) {
         if (!StringUtils.hasText(branchName)) {
-            return ValidationResult.invalid("Branch name is required");
+            return ValidationResult.invalid("Branch name is required in JenkinsWebhookPayload");
         }
         
         if (branchName.length() > MAX_BRANCH_NAME_LENGTH) {
@@ -171,7 +171,7 @@ public class InputValidator {
      */
     private ValidationResult validateRepositoryUrl(String repoUrl) {
         if (!StringUtils.hasText(repoUrl)) {
-            return ValidationResult.invalid("Repository URL is required");
+            return ValidationResult.invalid("Repository URL is required in JenkinsWebhookPayload. This might indicate that the Jenkins webhook payload doesn't contain repository information. Please check your Jenkins webhook configuration to ensure it includes repository details.");
         }
         
         if (repoUrl.length() > MAX_REPO_URL_LENGTH) {
@@ -209,7 +209,7 @@ public class InputValidator {
      */
     private ValidationResult validateCommitSha(String commitSha) {
         if (!StringUtils.hasText(commitSha)) {
-            return ValidationResult.invalid("Commit SHA is required");
+            return ValidationResult.invalid("Commit SHA is required in JenkinsWebhookPayload");
         }
         
         if (!VALID_COMMIT_SHA.matcher(commitSha).matches()) {

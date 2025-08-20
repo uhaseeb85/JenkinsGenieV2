@@ -118,6 +118,19 @@ class WebhookValidatorTest {
     }
     
     @Test
+    void shouldRejectPayloadWithMissingRepositoryUrl() {
+        // Given
+        JenkinsWebhookPayload payload = createValidPayload();
+        // Remove remote URLs to simulate missing repository URL
+        payload.getBuild().getScm().setRemoteUrls(new java.util.ArrayList<>());
+        
+        // When & Then
+        assertThatThrownBy(() -> webhookValidator.validateJenkinsPayload(payload, null))
+            .isInstanceOf(WebhookValidator.ValidationException.class)
+            .hasMessageContaining("Repository URL is required");
+    }
+    
+    @Test
     void shouldValidateCorrectHmacSha256Signature() throws Exception {
         // Given
         enableSignatureValidation();
@@ -308,12 +321,26 @@ class WebhookValidatorTest {
     
     private JenkinsWebhookPayload createValidPayload() {
         JenkinsWebhookPayload payload = new JenkinsWebhookPayload();
-        payload.setJob("test-job");
-        payload.setBuildNumber(123);
-        payload.setBranch("main");
-        payload.setRepoUrl("https://github.com/example/repo.git");
-        payload.setCommitSha("abc123def456");
-        payload.setBuildLogs("Build failed with errors");
+        payload.setJobName("test-job");
+        
+        // Create build data with required fields
+        JenkinsWebhookPayload.BuildData buildData = new JenkinsWebhookPayload.BuildData();
+        buildData.setNumber(123);
+        
+        // Create SCM data with required fields
+        JenkinsWebhookPayload.BuildData.ScmData scmData = new JenkinsWebhookPayload.BuildData.ScmData();
+        scmData.setBranch("main");
+        scmData.setCommit("abc123def456");
+        
+        // Add remote URLs for repository URL
+        java.util.List<String> remoteUrls = new java.util.ArrayList<>();
+        remoteUrls.add("https://github.com/example/repo.git");
+        scmData.setRemoteUrls(remoteUrls);
+        
+        buildData.setScm(scmData);
+        buildData.setLog("Build failed with errors");
+        
+        payload.setBuild(buildData);
         return payload;
     }
     

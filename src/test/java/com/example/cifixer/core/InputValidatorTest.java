@@ -62,7 +62,7 @@ class InputValidatorTest {
         
         // Then
         assertFalse(result.isValid());
-        assertEquals("Job name is required", result.getErrorMessage());
+        assertEquals("Job name is required in JenkinsWebhookPayload", result.getErrorMessage());
     }
     
     @Test
@@ -90,7 +90,7 @@ class InputValidatorTest {
         
         // Then
         assertFalse(result.isValid());
-        assertEquals("Build number is required", result.getErrorMessage());
+        assertEquals("Build number is required in JenkinsWebhookPayload", result.getErrorMessage());
     }
     
     @Test
@@ -441,12 +441,26 @@ class InputValidatorTest {
     
     private JenkinsWebhookPayload createValidPayload() {
         JenkinsWebhookPayload payload = new JenkinsWebhookPayload();
-        payload.setJob("test-job");
-        payload.setBuildNumber(123);
-        payload.setBranch("main");
-        payload.setRepoUrl("https://github.com/test/repo.git");
-        payload.setCommitSha("abc1234567890def");
-        payload.setBuildLogs("Build failed with compilation errors");
+        payload.setJobName("test-job");
+        
+        // Create build data with required fields
+        JenkinsWebhookPayload.BuildData buildData = new JenkinsWebhookPayload.BuildData();
+        buildData.setNumber(123);
+        
+        // Create SCM data with required fields
+        JenkinsWebhookPayload.BuildData.ScmData scmData = new JenkinsWebhookPayload.BuildData.ScmData();
+        scmData.setBranch("main");
+        scmData.setCommit("abc1234567890def");
+        
+        // Add remote URLs for repository URL
+        java.util.List<String> remoteUrls = new java.util.ArrayList<>();
+        remoteUrls.add("https://github.com/test/repo.git");
+        scmData.setRemoteUrls(remoteUrls);
+        
+        buildData.setScm(scmData);
+        buildData.setLog("Build failed with compilation errors");
+        
+        payload.setBuild(buildData);
         return payload;
     }
 }

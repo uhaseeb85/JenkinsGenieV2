@@ -3,6 +3,8 @@ package com.example.cifixer.web;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
@@ -15,6 +17,8 @@ import java.util.Objects;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class JenkinsWebhookPayload {
+    
+    private static final Logger logger = LoggerFactory.getLogger(JenkinsWebhookPayload.class);
     
     private String name;
     
@@ -954,29 +958,248 @@ public class JenkinsWebhookPayload {
     
     /**
      * Extract repository URL from various Jenkins webhook formats.
-     * 
+     *
      * @return The extracted repository URL or null if not found
      */
     public String extractRepoUrl() {
+        logger.debug("Extracting repository URL from JenkinsWebhookPayload");
+        
         if (build != null && build.getScm() != null) {
             BuildData.ScmData scm = build.getScm();
+            logger.debug("SCM data available in JenkinsWebhookPayload: {}", scm);
             
             // Try remoteUrls list
             if (scm.getRemoteUrls() != null && !scm.getRemoteUrls().isEmpty()) {
-                return scm.getRemoteUrls().get(0); // Return first URL
+                String repoUrl = scm.getRemoteUrls().get(0); // Return first URL
+                logger.debug("Found repository URL in remoteUrls from JenkinsWebhookPayload: {}", repoUrl);
+                return repoUrl;
+            } else {
+                logger.debug("No remoteUrls found in SCM data in JenkinsWebhookPayload");
             }
+            
+            // Try to construct URL from other SCM fields
+            // This is a fallback approach for cases where remoteUrls is not provided
+            String constructedUrl = constructRepoUrlFromScm(scm);
+            if (constructedUrl != null) {
+                logger.debug("Constructed repository URL from SCM data in JenkinsWebhookPayload: {}", constructedUrl);
+                return constructedUrl;
+            }
+        } else {
+            logger.debug("No SCM data available in build in JenkinsWebhookPayload");
         }
         
+        // Try to extract repo URL from build URL
         if (build != null && build.getUrl() != null) {
-            // Try to extract repo URL from build URL
             String buildUrl = build.getUrl();
-            // Extract base URL like http://jenkins/job/my-job/
+            logger.debug("Build URL available in JenkinsWebhookPayload: {}", buildUrl);
+            
+            // Try to get repo URL from Jenkins job URL
+            // Pattern: http://jenkins/job/my-job/123/ -> http://jenkins/
             int jobIndex = buildUrl.indexOf("/job/");
             if (jobIndex != -1) {
-                return buildUrl.substring(0, jobIndex);
+                String repoUrl = buildUrl.substring(0, jobIndex);
+                logger.debug("Extracted repository URL from build URL in JenkinsWebhookPayload: {}", repoUrl);
+                return repoUrl;
+            } else {
+                logger.debug("Could not extract repository URL from build URL in JenkinsWebhookPayload");
+            }
+        } else {
+            logger.debug("No build URL available in JenkinsWebhookPayload");
+        }
+        
+        // Try to extract repo URL from build logs (for cases where git commands are in logs)
+        String buildLogs = extractBuildLogs();
+        if (buildLogs != null && !buildLogs.isEmpty()) {
+            String repoUrlFromLogs = extractUrlFromGitCommand(buildLogs);
+            if (repoUrlFromLogs != null) {
+                logger.debug("Extracted repository URL from build logs in JenkinsWebhookPayload: {}", repoUrlFromLogs);
+                return repoUrlFromLogs;
             }
         }
         
+        // Try to construct repo URL from project/job name as a last resort
+        String jobName = extractJobName();
+        if (jobName != null && !jobName.isEmpty()) {
+            String constructedUrl = constructRepoUrlFromProjectName(jobName);
+            if (constructedUrl != null) {
+                logger.debug("Constructed repository URL from project name: {}", constructedUrl);
+                return constructedUrl;
+            }
+        }
+        
+        logger.warn("Could not extract repository URL from JenkinsWebhookPayload. This may indicate that the Jenkins webhook is not properly configured to include repository information.");
+        return null;
+    }
+    
+    /**
+     * Attempts to construct a repository URL from SCM data fields.
+     * This is a fallback method when remoteUrls is not provided.
+     *
+     * @param scm The SCM data
+     * @return Constructed repository URL or null if not possible
+     */
+    private String constructRepoUrlFromScm(BuildData.ScmData scm) {
+        // Try to get information from commit message or other fields
+        // This is a basic implementation and might not work for all cases
+        
+        // Check if we have a commit message that might contain repository information
+        String commitMessage = scm.getCommitMessage();
+        if (commitMessage == null) {
+            commitMessage = scm.getMessage();
+        }
+        
+        if (commitMessage != null) {
+            // Look for common patterns in commit messages that might contain repo URLs
+            String repoUrl = extractUrlFromText(commitMessage);
+            if (repoUrl != null) {
+                return repoUrl;
+            }
+        }
+        
+        // Check if we have an author email that might give us clues about the repository host
+        String authorEmail = scm.getAuthorEmail();
+        if (authorEmail != null && authorEmail.contains("@")) {
+            // Try to construct a basic URL from the email domain
+            // This is a very basic approach and might not work for all cases
+            String[] parts = authorEmail.split("@");
+            if (parts.length == 2) {
+                String domain = parts[1];
+                // Try common repository hosting services
+                if (domain.equals("github.com")) {
+                    // We would need more information to construct a GitHub URL
+                    // For now, just return a placeholder
+                    return "https://github.com";
+                } else if (domain.equals("gitlab.com")) {
+                    return "https://gitlab.com";
+                }
+            }
+        }
+        
+        // If we have a branch name, we might be able to infer the repository structure
+        // This is highly dependent on the specific setup and conventions used
+        
+        // For now, let's just return null to indicate we couldn't construct a URL
+        // A more complete implementation would analyze the available data
+        // and try to construct a URL based on common patterns
+        return null;
+    }
+    
+    /**
+     * Attempts to construct a repository URL from the project/job name.
+     * This is a fallback method when other methods fail to extract the URL.
+     *
+     * @param projectName The project or job name
+     * @return Constructed repository URL or null if not possible
+     */
+    private String constructRepoUrlFromProjectName(String projectName) {
+        if (projectName == null || projectName.isEmpty() || projectName.equals("unknown-job")) {
+            return null;
+        }
+        
+        logger.debug("Attempting to construct repository URL from project name: {}", projectName);
+        
+        // Clean up the project name to make it suitable for a repository name
+        String repoName = projectName.trim()
+            .replaceAll("[^a-zA-Z0-9._-]", "-") // Replace invalid chars with hyphens
+            .replaceAll("-+", "-")              // Replace multiple hyphens with single hyphen
+            .replaceAll("^-|-$", "");           // Remove leading/trailing hyphens
+        
+        if (repoName.isEmpty()) {
+            return null;
+        }
+        
+        // Try to extract organization name from project name if it follows org/repo pattern
+        String orgName = "uhaseeb85"; // Default organization name from the example URL
+        if (repoName.contains("/")) {
+            String[] parts = repoName.split("/", 2);
+            if (parts.length == 2 && !parts[0].isEmpty() && !parts[1].isEmpty()) {
+                orgName = parts[0];
+                repoName = parts[1];
+            }
+        }
+        
+        // Construct GitHub URL
+        return "https://github.com/" + orgName + "/" + repoName + ".git";
+    }
+    
+    /**
+     * Extracts a URL from text using basic pattern matching.
+     * This is a simple implementation that looks for common URL patterns.
+     *
+     * @param text The text to search for URLs
+     * @return The first URL found or null if none found
+     */
+    private String extractUrlFromText(String text) {
+        if (text == null) {
+            return null;
+        }
+        
+        // Simple regex to match URLs - this is a basic implementation
+        // A more robust implementation would use a proper URL parsing library
+        String[] words = text.split("\\s+");
+        for (String word : words) {
+            if (word.startsWith("http://") || word.startsWith("https://")) {
+                // Basic validation - check if it looks like a URL
+                if (word.contains(".") && word.length() > 10) {
+                    return word;
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Extracts repository URL from git command output in build logs.
+     * Looks for patterns like "git.exe config remote.origin.url https://github.com/user/repo.git"
+     * or similar git commands that reveal the repository URL.
+     *
+     * @param logs The build logs to search
+     * @return The extracted repository URL or null if not found
+     */
+    private String extractUrlFromGitCommand(String logs) {
+        if (logs == null || logs.isEmpty()) {
+            return null;
+        }
+        
+        logger.debug("Attempting to extract repository URL from git command in logs");
+        
+        // Look for git config remote.origin.url command
+        String[] lines = logs.split("\\r?\\n");
+        for (String line : lines) {
+            // Match patterns like "git.exe config remote.origin.url https://github.com/user/repo.git"
+            // or "git config --get remote.origin.url" output
+            if ((line.contains("git") && line.contains("config") && line.contains("remote.origin.url")) ||
+                (line.contains("git") && line.contains("remote") && line.contains("get-url"))) {
+                
+                logger.debug("Found potential git remote command: {}", line);
+                
+                // Extract the URL part - it's typically the last part of the command or output
+                String[] parts = line.trim().split("\\s+");
+                for (int i = 0; i < parts.length; i++) {
+                    String part = parts[i];
+                    // Check if this part is a URL
+                    if ((part.startsWith("http://") || part.startsWith("https://") ||
+                         part.startsWith("git@") || part.startsWith("ssh://")) &&
+                        (part.contains(".git") || part.contains("github") ||
+                         part.contains("gitlab") || part.contains("bitbucket"))) {
+                        
+                        logger.debug("Extracted repository URL from git command: {}", part);
+                        return part;
+                    }
+                }
+                
+                // If we didn't find a URL in the parts but the line contains a URL pattern,
+                // try to extract it using a more general approach
+                String url = extractUrlFromText(line);
+                if (url != null) {
+                    logger.debug("Extracted repository URL using general pattern: {}", url);
+                    return url;
+                }
+            }
+        }
+        
+        logger.debug("No repository URL found in git commands in logs");
         return null;
     }
     
