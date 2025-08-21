@@ -5,13 +5,13 @@
 ## 🎯 What This Project Does
 
 **JenkinsGenieV2** is an intelligent CI/CD automation system that:
-1. **Receives Jenkins webhook notifications** when builds fail
+1. **Receives Jenkins webhook notifications** when builds fail via REST API (Port 8081)
 2. **Analyzes build logs** to understand Spring Boot specific errors (compilation, dependency, configuration issues)
-3. **Ranks candidate files** for fixing using intelligent algorithms 
-4. **Generates targeted code fixes** using external LLM APIs (OpenRouter, OpenAI, Anthropic)
-5. **Validates fixes** by running Maven/Gradle builds and tests
+3. **Ranks candidate files** for fixing using intelligent algorithms with enhanced Spring project context
+4. **Generates targeted code fixes** using external LLM APIs (OpenRouter, OpenAI, Anthropic) with comprehensive prompt engineering
+5. **Validates fixes** by running Maven/Gradle builds and tests (optional - can be skipped)
 6. **Creates GitHub pull requests** with comprehensive descriptions and validation results
-7. **Sends notifications** to stakeholders via email
+7. **Sends notifications** to stakeholders via email and provides real-time monitoring
 
 ## 🏗️ Architecture Overview
 
@@ -22,10 +22,12 @@ The project uses a **multi-agent architecture** where specialized agents handle 
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   Jenkins       │───▶│  Webhook        │───▶│  Task Queue     │
 │   Failure       │    │  Controller      │    │  (Database)     │
+│   (Build #214)  │    │  (Port 8081)     │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                                          │
                        ┌─────────────────────────────────▼─────────────────--┐
                        │                Orchestrator                         │
+                       │           (Task Processing Engine)                  │
                        └─────────────────────┬───────────────────────────────┘
                                              │
         ┌───────────────┬────────────────────┼────────────────────┬──────────────────┐
@@ -33,16 +35,17 @@ The project uses a **multi-agent architecture** where specialized agents handle 
    ┌────▼────┐    ┌─────▼─────┐       ┌─────▼─────┐       ┌─────▼─────┐      ┌─────▼─────┐
    │ Planner │    │ Retriever │       │ Code-Fix  │       │ Validator │      │ PR Agent  │
    │ Agent   │    │ Agent     │       │ Agent     │       │ Agent     │      │           │
+   │         │    │           │       │ (LLM)     │       │(Optional) │      │           │
    └─────────┘    └───────────┘       └───────────┘       └───────────┘      └───────────┘
 ```
 
 ### Key Agents
 - **🧠 Planner Agent**: Analyzes build logs and creates fix plans with Spring Boot context
-- **📁 Retriever Agent**: Identifies candidate files for fixing using stack traces and error analysis  
-- **⚙️ Repo Agent**: Handles Git operations (clone, branch, commit, push)
-- **🤖 Code-Fix Agent**: Generates code patches using LLM APIs with Spring-specific prompts
-- **✅ Validator Agent**: Validates fixes by running Maven/Gradle builds and tests
-- **📋 PR Agent**: Creates GitHub pull requests with comprehensive descriptions
+- **📁 Retriever Agent**: Identifies candidate files for fixing using enhanced error analysis and stack traces  
+- **⚙️ Repo Agent**: Handles Git operations (clone, branch, commit, push) - *Note: Functionality integrated into other agents*
+- **🤖 Code-Fix Agent**: Generates code patches using LLM APIs with Spring-specific prompts and comprehensive project structure context
+- **✅ Validator Agent**: Validates fixes by running Maven/Gradle builds and tests (can be skipped for faster PR creation)
+- **📋 PR Agent**: Creates GitHub pull requests with comprehensive descriptions and handles branch operations
 - **📧 Notification Agent**: Sends email notifications to stakeholders
 
 ## 🛠️ Technology Stack
@@ -51,14 +54,16 @@ The project uses a **multi-agent architecture** where specialized agents handle 
 - **Java 8** - Base language (legacy compatibility requirement)
 - **Spring Boot 2.7.18** - Application framework with auto-configuration
 - **Spring Data JPA** - Data persistence with PostgreSQL
-- **PostgreSQL 14** - Primary database with JSONB support
+- **PostgreSQL 14** - Primary database with JSONB support for metadata
 - **Maven** - Build tool and dependency management
+- **Port 8081** - Application server port (configured in application.yml)
 
 ### External Integrations  
-- **JGit** - Git operations (clone, branch, commit, push)
-- **OkHttp 4.12** - HTTP client for GitHub and LLM APIs
+- **JGit 6.7.0** - Git operations (clone, branch, commit, push)
+- **OkHttp 4.12.0** - HTTP client for GitHub and LLM APIs
 - **Jackson** - JSON processing for API communication
 - **Flyway** - Database schema migrations
+- **Hibernate Types** - JSONB support for PostgreSQL
 
 ### LLM Integration
 - **OpenRouter** - Primary LLM provider (supports Claude, GPT-4, etc.)
@@ -66,12 +71,19 @@ The project uses a **multi-agent architecture** where specialized agents handle 
 - **Anthropic Claude** - Recommended model: `anthropic/claude-3.5-sonnet`
 - **Custom Endpoints** - Support for local LLM servers (Ollama, LM Studio)
 
+### Enhanced Features
+- **Spring Project Analysis** - Comprehensive project structure scanning and context generation
+- **Enhanced Prompt Engineering** - Spring-specific best practices and project structure injection
+- **Advanced Error Analysis** - Improved compilation error parsing and file selection
+- **Monitoring & Observability** - Prometheus metrics, structured logging, health checks
+
 ### Testing & Quality
 - **JUnit 5** - Unit testing framework
-- **Testcontainers** - Integration testing with PostgreSQL
+- **Testcontainers 1.19.3** - Integration testing with PostgreSQL
 - **MockWebServer** - HTTP API testing
 - **JaCoCo** - Code coverage (80% instruction, 75% branch coverage required)
-- **Awaitility** - Async testing support
+- **Awaitility 4.2.0** - Async testing support
+- **GreenMail** - Email testing
 
 ## 🚀 Quick Start
 
@@ -120,10 +132,10 @@ JENKINS_WEBHOOK_SECRET=your_webhook_secret
 
 ### 4. Deploy with Docker
 ```bash
-# Start all services
+# Start all services (PostgreSQL, MailHog, CI Fixer)
 docker-compose up -d
 
-# Check application health
+# Check application health (Updated Port)
 curl http://localhost:8081/actuator/health
 
 # View logs
@@ -131,7 +143,7 @@ docker-compose logs -f ci-fixer
 ```
 
 ### 5. Configure Jenkins Webhook
-Add webhook to your Jenkins job:
+Add webhook to your Jenkins job (Updated endpoint):
 ```groovy
 // In Jenkins Pipeline or Build Configuration
 post {
@@ -165,46 +177,62 @@ JenkinsGenieV2/
 │   ├── MultiAgentCiFixerApplication.java      # 🚀 Main Spring Boot application
 │   ├── agents/                                # 🤖 Agent implementations
 │   │   ├── PlannerAgent.java                  # Analyzes build failures
-│   │   ├── RetrieverAgent.java                # Finds candidate files  
-│   │   ├── RepoAgent.java                     # Git operations
-│   │   ├── CodeFixAgent.java                  # LLM-powered code generation
-│   │   ├── ValidatorAgent.java                # Build validation
-│   │   ├── PrAgent.java                       # GitHub PR creation
-│   │   └── NotificationAgent.java             # Email notifications
+│   │   ├── RetrieverAgent.java                # Finds candidate files with enhanced analysis
+│   │   ├── CodeFixAgent.java                  # LLM-powered code generation with project context
+│   │   ├── ValidatorAgent.java                # Build validation (optional)
+│   │   ├── PrAgent.java                       # GitHub PR creation with branch operations
+│   │   ├── NotificationAgent.java             # Email notifications
+│   │   ├── ErrorInfo.java                     # Error information models
+│   │   ├── ErrorType.java                     # Error type classifications
+│   │   └── *Payload.java                      # Agent payload classes
 │   ├── core/                                  # 🏗️ Core framework
-│   │   ├── Agent.java                         # Base agent interface
-│   │   ├── Task.java                          # Task entity
-│   │   ├── TaskQueue.java                     # Task queue interface
-│   │   ├── TaskResult.java                    # Task processing result
+│   │   ├── Task.java                          # Task entity (JPA)
+│   │   ├── TaskType.java                      # Task type definitions
 │   │   ├── TaskStatus.java                    # Task status enum
-│   │   ├── TaskType.java                      # Task type enum
-│   │   └── Orchestrator.java                  # Task orchestration
+│   │   ├── TaskQueueService.java              # Task queue management
+│   │   └── Orchestrator.java                  # Task orchestration engine
 │   ├── web/                                   # 🌐 REST API & Webhooks
-│   │   ├── WebhookController.java             # Jenkins webhook handler
-│   │   └── WebhookValidator.java              # Webhook security
+│   │   ├── WebhookController.java             # Jenkins webhook handler (Port 8081)
+│   │   ├── BuildController.java               # Build management API
+│   │   ├── AdminController.java               # Administrative endpoints
+│   │   ├── WebhookValidator.java              # Webhook security validation
+│   │   └── *Response.java                     # API response models
 │   ├── store/                                 # 💾 Data persistence (JPA)
-│   │   ├── Build.java                         # Build entity
-│   │   ├── Task.java                          # Task entity  
+│   │   ├── Build.java                         # Build entity with enhanced metadata
+│   │   ├── Task.java                          # Task entity
 │   │   ├── PullRequest.java                   # PR tracking
+│   │   ├── BuildStatus.java                   # Build status enum
 │   │   └── *Repository.java                   # JPA repositories
 │   ├── llm/                                   # 🧠 LLM integration
-│   │   ├── LlmClient.java                     # LLM API client
-│   │   └── PromptTemplate.java                # Spring-aware prompts
+│   │   ├── LlmClient.java                     # LLM API client with enhanced logging
+│   │   └── SpringPromptTemplate.java          # Spring-aware prompts with best practices
 │   ├── git/                                   # 📦 Git operations
-│   │   └── GitService.java                    # JGit wrapper
-│   └── github/                                # 🐙 GitHub integration
-│       ├── GitHubClient.java                  # GitHub API client
-│       └── PullRequestTemplate.java           # PR templates
+│   │   └── GitService.java                    # JGit wrapper with enhanced operations
+│   ├── github/                                # 🐙 GitHub integration
+│   │   ├── GitHubClient.java                  # GitHub API client
+│   │   └── PullRequestTemplate.java           # PR templates
+│   ├── util/                                  # 🔧 Utilities
+│   │   ├── SpringProjectAnalyzer.java         # Project structure analysis (NEW)
+│   │   ├── SpringProjectContext.java          # Project context model (NEW)
+│   │   └── BuildTool.java                     # Build tool detection
+│   ├── monitoring/                            # 📊 Monitoring & Metrics
+│   │   └── MetricsService.java                # Custom metrics collection
+│   └── notification/                          # 📧 Notification services
+│       └── EmailService.java                  # Email notification service
 ├── src/main/resources/
-│   ├── application.yml                        # ⚙️ Main configuration
+│   ├── application.yml                        # ⚙️ Main configuration (Port 8081)
 │   ├── application-production.yml             # Production overrides
 │   └── db/migration/                          # 🗄️ Flyway migrations
 ├── docs/                                      # 📚 Documentation
 │   ├── DEPLOYMENT.md                          # Deployment guide
 │   ├── USER_GUIDE.md                          # Usage instructions
 │   ├── WEBHOOK_CONFIGURATION.md               # Jenkins integration
+│   ├── CONFIGURATION_EXAMPLES.md              # Configuration examples
 │   └── TROUBLESHOOTING.md                     # Common issues
 ├── docker/                                    # 🐳 Docker configuration
+│   ├── init-scripts/                          # Database initialization
+│   └── deploy.sh                              # Deployment scripts
+├── frontend-plan.md                           # 🎨 Frontend development plan (NEW)
 ├── docker-compose.yml                         # Service orchestration
 └── pom.xml                                    # Maven dependencies
 ```
@@ -215,6 +243,12 @@ JenkinsGenieV2/
 ```yaml
 # Key configuration sections:
 
+# Server Configuration (Updated Port)
+server:
+  port: 8081
+  servlet:
+    context-path: /api
+
 # Database connection with environment variable support
 spring:
   datasource:
@@ -222,7 +256,7 @@ spring:
     username: ${POSTGRES_USER:cifixer}
     password: ${POSTGRES_PASSWORD:cifixer}
 
-# LLM API configuration  
+# LLM API configuration with enhanced settings
 llm:
   api:
     base-url: ${LLM_API_BASE_URL:https://openrouter.ai/api/v1}
@@ -230,6 +264,8 @@ llm:
     model: ${LLM_API_MODEL:anthropic/claude-3.5-sonnet}
     max-tokens: ${LLM_API_MAX_TOKENS:128000}
     temperature: 0.1
+    timeout-seconds: 60
+    max-retries: 3
 
 # GitHub integration
 github:
@@ -237,7 +273,7 @@ github:
   api:
     base-url: https://api.github.com
 
-# Security configuration
+# Security configuration with webhook validation
 security:
   webhook:
     signature:
@@ -245,28 +281,33 @@ security:
         enabled: ${WEBHOOK_SIGNATURE_VALIDATION_ENABLED:false}
     secrets:
       jenkins: ${JENKINS_WEBHOOK_SECRET:}
+
+# Enhanced logging with correlation IDs
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] [%X{llmRequestId:-}] %logger{36} - %msg%n"
 ```
 
 ### Docker Compose Services
 ```yaml
 services:
-  postgres:      # PostgreSQL database with initialization scripts
-  mailhog:       # Email testing (SMTP server + web UI)  
-  ci-fixer:      # Main application with health checks
+  postgres:      # PostgreSQL 14 database with initialization scripts
+  mailhog:       # Email testing (SMTP server + web UI on port 8025)  
+  ci-fixer:      # Main application (Port 8081) with health checks and enhanced logging
 ```
 
 ## 🔄 How It Works (Complete Flow)
 
 ### 1. **Jenkins Build Failure** 
 ```bash
-# Jenkins detects build failure and sends webhook
+# Jenkins detects build failure and sends webhook (Updated endpoint)
 POST /api/webhook/jenkins
 {
   "job": "my-spring-app",
-  "buildNumber": 123,
-  "branch": "feature/new-feature", 
+  "buildNumber": 214,
+  "branch": "main", 
   "repoUrl": "https://github.com/company/my-app.git",
-  "commitSha": "abc123def456",
+  "commitSha": "ddbd997b2b1bc79d6fcf67fe4d00409d22d6f264",
   "buildLogs": "compilation errors..."
 }
 ```
@@ -304,20 +345,23 @@ POST /api/webhook/jenkins
 
 **c) Code-Fix Agent (`CODE_FIX` task)**
 ```java
-// Generates code fixes using LLM
+// Generates code fixes using LLM with enhanced context
 - Read current file content
-- Create Spring-aware prompts with context
-- Call LLM API (OpenRouter/OpenAI) for fixes
+- Generate comprehensive project structure using SpringProjectAnalyzer
+- Create Spring-aware prompts with best practices and project context
+- Call LLM API (OpenRouter/OpenAI) for fixes with enhanced error handling
 - Apply patches and validate syntax
+- Track patched files in metadata for PR description
 ```
 
-**d) Validator Agent (`VALIDATE` task)**
+**d) Validator Agent (`VALIDATE` task)** - *Optional*
 ```java  
-// Validates generated fixes
+// Validates generated fixes (can be skipped for faster PR creation)
 - Run Maven/Gradle clean compile
 - Execute unit tests  
 - Check for new compilation errors
 - Return validation results
+- Skip validation option available in Orchestrator
 ```
 
 **e) PR Agent (`CREATE_PR` task)**
@@ -373,7 +417,7 @@ mvn test -Dtest="**/*IntegrationTest"
 
 ### Health Checks
 ```bash
-# Application health
+# Application health (Updated Port)
 curl http://localhost:8081/actuator/health
 
 # Database connection status  
@@ -391,19 +435,24 @@ curl http://localhost:8081/actuator/prometheus
 # Application metrics
 curl http://localhost:8081/actuator/metrics
 
-# Custom business metrics
+# Custom business metrics (Enhanced)
 - cifixer.task.processing.duration
 - cifixer.build.processing.duration  
 - cifixer.llm.api.requests
 - cifixer.github.api.requests
+- cifixer.llm.token.usage
+- cifixer.patch.application.success
 ```
 
 ### Logging
 ```yaml
-# Structured logging with correlation IDs
+# Structured logging with enhanced correlation IDs
 logging:
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] [%X{llmRequestId:-}] %logger{36} - %msg%n"
+  level:
+    com.example.cifixer: DEBUG
+    com.example.cifixer.llm.LlmClient: DEBUG  # Enhanced LLM logging
 ```
 
 ## 🛡️ Security Features
@@ -411,17 +460,18 @@ logging:
 ### Webhook Security
 - **HMAC SHA-256 signature validation** for Jenkins webhooks
 - **Input validation and sanitization** for all payloads
-- **Rate limiting** on webhook endpoints
+- **Rate limiting** on webhook endpoints (Port 8081)
 
 ### API Security  
 - **GitHub token-based authentication** with proper scoping
 - **LLM API key protection** via environment variables
-- **SSL/TLS verification** for all external API calls
+- **SSL/TLS verification** for all external API calls with configurable trust stores
 
 ### Code Safety
-- **Patch validation** before applying fixes
+- **Enhanced patch validation** before applying fixes
 - **Sandbox execution** for build validation
 - **File access restrictions** within working directory
+- **Project structure analysis** to prevent unauthorized file access
 
 ## 🐛 Troubleshooting
 
@@ -432,7 +482,7 @@ logging:
 # Check API key and endpoint
 curl -H "Authorization: Bearer $LLM_API_KEY" $LLM_API_BASE_URL/models
 
-# Check application logs
+# Check application logs (Updated port)
 docker-compose logs ci-fixer | grep "LlmClient"
 ```
 
@@ -442,6 +492,7 @@ docker-compose logs ci-fixer | grep "LlmClient"
 curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/rate_limit
 
 # Enable rate limit monitoring in logs
+export LOGGING_LEVEL_COM_EXAMPLE_CIFIXER_GITHUB=DEBUG
 ```
 
 **3. Build Validation Failures**
@@ -451,6 +502,8 @@ docker exec ci-fixer-app ls -la /app/work
 
 # Review validation logs
 docker-compose logs ci-fixer | grep "ValidatorAgent"
+
+# Skip validation for faster PR creation (configurable in Orchestrator)
 ```
 
 **4. Database Connection Issues**
@@ -460,6 +513,18 @@ docker-compose logs postgres
 
 # Verify database connectivity
 docker exec ci-fixer-postgres pg_isready -U cifixer
+
+# Check application health
+curl http://localhost:8081/actuator/health/db
+```
+
+**5. Enhanced Spring Project Analysis Issues**
+```bash
+# Check project structure analysis
+docker-compose logs ci-fixer | grep "SpringProjectAnalyzer"
+
+# Verify project structure generation
+docker exec ci-fixer-app ls -la /app/work/<build-id>/
 ```
 
 ### Debug Mode
@@ -502,13 +567,16 @@ This project follows standard Spring Boot development practices:
 # Clone repository
 git clone https://github.com/uhaseeb85/JenkinsGenieV2.git
 
-# Run in development mode
+# Run in development mode (Port 8081)
 mvn spring-boot:run -Dspring.profiles.active=dev
 
-# Run tests
-mvn clean test
+# Run tests with coverage
+mvn clean test jacoco:report
+
+# Run integration tests
+mvn clean verify
 ```
 
 ---
 
-> **💡 AI Usage Tip**: This README contains comprehensive context about the project architecture, configuration, and operational details. Use this information to understand the codebase structure, troubleshoot issues, and implement new features without starting from scratch each time.
+> **💡 AI Usage Tip**: This README contains comprehensive context about the project architecture, configuration, and operational details. The system now runs on **Port 8081** with enhanced Spring project analysis, optional validation skipping, comprehensive project structure injection for LLM context, and improved error handling. Use this information to understand the codebase structure, troubleshoot issues, and implement new features. The frontend development plan is available in `frontend-plan.md` for UI development.
