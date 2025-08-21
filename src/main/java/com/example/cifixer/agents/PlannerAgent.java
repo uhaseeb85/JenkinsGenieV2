@@ -80,12 +80,8 @@ public class PlannerAgent implements Agent<Map<String, Object>> {
                 return TaskResult.failure("No build logs found in payload");
             }
             
-            // Log a sample of the build logs for debugging
-            if (buildLogs.length() > 500) {
-                logger.debug("Build logs sample (first 500 chars): {}", buildLogs.substring(0, 500));
-            } else {
-                logger.debug("Full build logs: {}", buildLogs);
-            }
+            // Log the actual build logs for debugging
+            logger.info("DEBUG: Full build logs content: '{}'", buildLogs);
             
             // Parse logs to identify errors
             List<ErrorInfo> errors = parseSpringProjectLogs(buildLogs);
@@ -140,6 +136,11 @@ public class PlannerAgent implements Agent<Map<String, Object>> {
         logger.debug("Parsing last {} lines of logs (from line {} to {})", 
             lines.length - startIndex, startIndex, lines.length);
         
+        // First, do a simple search for [ERROR] lines
+        List<ErrorInfo> simpleErrors = parseErrorLines(limitedLogs);
+        logger.debug("Found {} simple [ERROR] lines", simpleErrors.size());
+        errors.addAll(simpleErrors);
+        
         // Parse different error types
         List<ErrorInfo> mavenErrors = parseMavenCompilerErrors(limitedLogs);
         logger.debug("Found {} Maven compiler errors", mavenErrors.size());
@@ -176,6 +177,52 @@ public class PlannerAgent implements Agent<Map<String, Object>> {
         logger.info("Final error count after deduplication: {}", deduplicatedErrors.size());
         
         return deduplicatedErrors;
+    }
+    
+    /**
+     * Simple error line parser - looks for any line containing [ERROR]
+     */
+    private List<ErrorInfo> parseErrorLines(String logs) {
+        List<ErrorInfo> errors = new ArrayList<>();
+        String[] lines = logs.split("\n");
+        
+        for (String line : lines) {
+            if (line.contains("[ERROR]")) {
+                logger.debug("Found error line: {}", line);
+                
+                // Try to extract file path and error message
+                String filePath = null;
+                String errorMessage = line;
+                int lineNumber = 0;
+                
+                // Look for file path pattern: /path/to/file.java:[line,column]
+                Pattern filePattern = Pattern.compile("([^\\s]+\\.java):\\[(\\d+),(\\d+)\\]");
+                Matcher fileMatcher = filePattern.matcher(line);
+                if (fileMatcher.find()) {
+                    filePath = normalizeFilePath(fileMatcher.group(1));
+                    lineNumber = Integer.parseInt(fileMatcher.group(2));
+                    // Extract the error message after the file reference
+                    int messageStart = line.indexOf(fileMatcher.group(0)) + fileMatcher.group(0).length();
+                    if (messageStart < line.length()) {
+                        errorMessage = line.substring(messageStart).trim();
+                    }
+                }
+                
+                ErrorInfo error = new ErrorInfo(ErrorType.COMPILATION_ERROR, errorMessage);
+                error.setFilePath(filePath);
+                error.setLineNumber(lineNumber);
+                
+                // Check if it's a missing dependency error
+                if (errorMessage.contains("cannot find symbol")) {
+                    error.setErrorType(ErrorType.MISSING_DEPENDENCY);
+                    error.setMissingDependency(extractMissingSymbol(errorMessage));
+                }
+                
+                errors.add(error);
+            }
+        }
+        
+        return errors;
     }
     
     private List<ErrorInfo> parseMavenCompilerErrors(String logs) {

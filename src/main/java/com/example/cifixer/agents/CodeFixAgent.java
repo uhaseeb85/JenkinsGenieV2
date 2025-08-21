@@ -3,11 +3,12 @@ package com.example.cifixer.agents;
 import com.example.cifixer.core.Agent;
 import com.example.cifixer.core.Task;
 import com.example.cifixer.core.TaskResult;
-import com.example.cifixer.core.TaskStatus;
 import com.example.cifixer.llm.LlmClient;
 import com.example.cifixer.llm.LlmException;
 import com.example.cifixer.llm.SpringPromptTemplate;
 import com.example.cifixer.store.Build;
+import com.example.cifixer.store.CandidateFile;
+import com.example.cifixer.store.CandidateFileRepository;
 import com.example.cifixer.store.Patch;
 import com.example.cifixer.store.PatchRepository;
 import com.example.cifixer.util.SpringProjectAnalyzer;
@@ -27,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -44,63 +46,106 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
     private final LlmClient llmClient;
     private final SpringProjectAnalyzer springProjectAnalyzer;
     private final PatchRepository patchRepository;
+    private final CandidateFileRepository candidateFileRepository;
     
     @Autowired
     public CodeFixAgent(LlmClient llmClient, SpringProjectAnalyzer springProjectAnalyzer, 
-                       PatchRepository patchRepository) {
+                       PatchRepository patchRepository, CandidateFileRepository candidateFileRepository) {
         this.llmClient = llmClient;
         this.springProjectAnalyzer = springProjectAnalyzer;
         this.patchRepository = patchRepository;
+        this.candidateFileRepository = candidateFileRepository;
     }
     
     @Override
     public TaskResult handle(Task task, Map<String, Object> payload) {
-        logger.info("Processing PATCH task for build: {}", task.getBuild().getId());
+        logger.info("🔧 STARTING CODE FIX AGENT - Build ID: {}", task.getBuild().getId());
         
         try {
             PatchPayload patchPayload = extractPatchPayload(payload);
+            logger.info("Working directory: {}", patchPayload.getWorkingDirectory());
             
             // Validate working directory exists
             if (!Files.exists(Paths.get(patchPayload.getWorkingDirectory()))) {
+                logger.error("❌ WORKING DIRECTORY NOT FOUND: {}", patchPayload.getWorkingDirectory());
                 return TaskResult.failure("Working directory does not exist: " + patchPayload.getWorkingDirectory());
+            }
+            logger.info("✅ Working directory validated: {}", patchPayload.getWorkingDirectory());
+            
+            // Retrieve candidate files from database instead of payload
+            List<CandidateFile> candidateFiles = candidateFileRepository.findByBuildIdOrderByRankScoreDesc(task.getBuild().getId());
+            logger.info("📁 Retrieved {} candidate files from database for build: {}", 
+                candidateFiles.size(), task.getBuild().getId());
+            
+            if (candidateFiles.isEmpty()) {
+                logger.error("❌ NO CANDIDATE FILES FOUND for build: {}", task.getBuild().getId());
+                return TaskResult.failure("No candidate files found");
+            }
+            
+            logger.info("📋 Candidate files to process:");
+            for (int i = 0; i < candidateFiles.size(); i++) {
+                CandidateFile cf = candidateFiles.get(i);
+                logger.info("  {}. {} (score: {}) - {}", i + 1, cf.getFilePath(), cf.getRankScore(), cf.getReason());
             }
             
             // Analyze Spring project context
+            logger.info("📋 Analyzing Spring project context...");
             SpringProjectContext springContext = springProjectAnalyzer.analyzeProject(patchPayload.getWorkingDirectory());
+            logger.info("Spring context analysis complete - Build tool: {}, Version: {}", 
+                springContext.getBuildTool(), springContext.getSpringBootVersion());
             
             // Process candidate files and generate patches
+            logger.info("🔄 Starting patch generation and application...");
             int patchesGenerated = 0;
             int patchesApplied = 0;
+            int filesProcessed = 0;
+            int filesSkipped = 0;
             
-            for (PatchPayload.CandidateFile candidateFile : patchPayload.getCandidateFiles()) {
+            for (CandidateFile candidateFile : candidateFiles) {
                 try {
-                    logger.info("Processing candidate file: {} (score: {})", 
+                    logger.info("📂 Processing file {}/{}: {} (score: {})", 
+                        ++filesProcessed, candidateFiles.size(),
                         candidateFile.getFilePath(), candidateFile.getRankScore());
                     
                     boolean success = processFile(task.getBuild(), patchPayload, candidateFile, springContext);
                     if (success) {
                         patchesGenerated++;
                         patchesApplied++;
+                        logger.info("✅ File processed successfully: {}", candidateFile.getFilePath());
                     } else {
                         patchesGenerated++;
+                        logger.warn("⚠️  Patch generated but not applied for: {}", candidateFile.getFilePath());
                     }
                     
                 } catch (Exception e) {
-                    logger.warn("Failed to process candidate file: {} - {}", 
-                        candidateFile.getFilePath(), e.getMessage());
+                    filesSkipped++;
+                    logger.error("❌ Failed to process candidate file: {} - {} - {}", 
+                        candidateFile.getFilePath(), e.getClass().getSimpleName(), e.getMessage(), e);
                 }
             }
             
+            logger.info("📊 PATCH PROCESSING SUMMARY:");
+            logger.info("  Files processed: {}", filesProcessed);
+            logger.info("  Files skipped: {}", filesSkipped);
+            logger.info("  Patches generated: {}", patchesGenerated);
+            logger.info("  Patches applied: {}", patchesApplied);
+            
             if (patchesApplied == 0) {
+                logger.error("❌ NO PATCHES APPLIED - All patch attempts failed");
                 return TaskResult.failure("No patches could be generated or applied successfully");
             }
             
             // Generate commit message with Spring component references
+            logger.info("📝 Generating commit message...");
             String commitMessage = generateCommitMessage(patchPayload, springContext, patchesApplied);
+            logger.info("Commit message: {}", commitMessage);
             
             // Commit changes
+            logger.info("💾 Committing changes...");
             commitChanges(patchPayload.getWorkingDirectory(), commitMessage, task.getBuild());
+            logger.info("✅ Changes committed successfully");
             
+            logger.info("🎉 CODE FIX AGENT COMPLETED SUCCESSFULLY");
             logger.info("Successfully generated {} patches and applied {} for build: {}", 
                 patchesGenerated, patchesApplied, task.getBuild().getId());
             
@@ -112,7 +157,7 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
             return TaskResult.success("Code fixes generated and applied successfully", metadata);
             
         } catch (Exception e) {
-            logger.error("Failed to process PATCH task for build: {}", 
+            logger.error("💥 CODE FIX AGENT FAILED for build: {}", 
                 task.getBuild().getId(), e);
             return TaskResult.failure("Failed to generate code fixes: " + e.getMessage());
         }
@@ -122,7 +167,7 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
      * Processes a single candidate file to generate and apply a patch.
      */
     private boolean processFile(Build build, PatchPayload patchPayload, 
-                              PatchPayload.CandidateFile candidateFile, 
+                              CandidateFile candidateFile, 
                               SpringProjectContext springContext) throws Exception {
         
         String filePath = candidateFile.getFilePath();
@@ -163,7 +208,7 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
      * Generates a patch with retry logic and enhanced context on failures.
      */
     private String generatePatchWithRetry(PatchPayload patchPayload, 
-                                        PatchPayload.CandidateFile candidateFile,
+                                        CandidateFile candidateFile,
                                         String fileContent, 
                                         SpringProjectContext springContext) {
         
@@ -236,13 +281,13 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
      * Builds enhanced error context for retry attempts.
      */
     private String buildEnhancedErrorContext(String originalContext, String fileReason, int attempt) {
-        StringBuilder enhanced = new StringBuilder(originalContext);
+        StringBuilder enhanced = new StringBuilder(originalContext != null ? originalContext : "");
         
         if (attempt > 1) {
             enhanced.append("\n\nPrevious attempts failed. ");
         }
         
-        enhanced.append("\n\nFile Selection Reason: ").append(fileReason);
+        enhanced.append("\n\nFile Selection Reason: ").append(fileReason != null ? fileReason : "Unknown");
         
         if (attempt > 1) {
             enhanced.append("\n\nPlease focus on the most likely cause and provide a minimal, targeted fix.");
@@ -504,7 +549,14 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
         
         patchPayload.setWorkingDirectory((String) payload.get("workingDirectory"));
         patchPayload.setProjectName((String) payload.get("projectName"));
-        patchPayload.setErrorContext((String) payload.get("errorContext"));
+        
+        // Get error context, fallback to build logs if not available
+        String errorContext = (String) payload.get("errorContext");
+        if (errorContext == null || errorContext.trim().isEmpty()) {
+            errorContext = (String) payload.get("buildLogs");
+        }
+        patchPayload.setErrorContext(errorContext);
+        
         patchPayload.setRepoUrl((String) payload.get("repoUrl"));
         patchPayload.setBranch((String) payload.get("branch"));
         patchPayload.setCommitSha((String) payload.get("commitSha"));

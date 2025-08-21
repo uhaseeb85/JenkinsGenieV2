@@ -7,6 +7,8 @@ import com.example.cifixer.core.TaskType;
 import com.example.cifixer.llm.LlmClient;
 import com.example.cifixer.llm.LlmException;
 import com.example.cifixer.store.Build;
+import com.example.cifixer.store.CandidateFile;
+import com.example.cifixer.store.CandidateFileRepository;
 import com.example.cifixer.store.Patch;
 import com.example.cifixer.store.PatchRepository;
 import com.example.cifixer.util.BuildTool;
@@ -43,6 +45,9 @@ class CodeFixAgentTest {
     @Mock
     private PatchRepository patchRepository;
     
+    @Mock
+    private CandidateFileRepository candidateFileRepository;
+    
     private CodeFixAgent codeFixAgent;
     
     @TempDir
@@ -54,7 +59,7 @@ class CodeFixAgentTest {
     
     @BeforeEach
     void setUp() {
-        codeFixAgent = new CodeFixAgent(llmClient, springProjectAnalyzer, patchRepository);
+        codeFixAgent = new CodeFixAgent(llmClient, springProjectAnalyzer, patchRepository, candidateFileRepository);
         
         testBuild = new Build();
         testBuild.setId(123L);

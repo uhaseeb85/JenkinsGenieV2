@@ -211,7 +211,7 @@ public class WebhookController {
         
         // Store the full payload as metadata
         Map<String, Object> payloadMap = new HashMap<>();
-        payloadMap.put("buildLogs", payload.extractBuildLogs());
+        payloadMap.put("buildLogs", payload.getBuildLogs());
         
         // Add SCM data to metadata
         if (payload.getBuild() != null && payload.getBuild().getScm() != null) {
@@ -241,8 +241,13 @@ public class WebhookController {
      */
     private Map<String, Object> createTaskPayload(JenkinsWebhookPayload payload) {
         Map<String, Object> taskPayload = new HashMap<>();
-        taskPayload.put("buildLogs", payload.extractBuildLogs());
-        taskPayload.put("repoUrl", payload.extractRepoUrl());
+        taskPayload.put("buildLogs", payload.getBuildLogs());
+        
+        // Debug: Log the actual repoUrl value being put into the payload
+        String repoUrl = payload.extractRepoUrl();
+        logger.debug("DEBUG: About to put repoUrl into task payload: '{}'", repoUrl);
+        
+        taskPayload.put("repoUrl", repoUrl);
         taskPayload.put("branch", payload.extractBranchName());
         taskPayload.put("commitSha", payload.extractCommitSha());
         

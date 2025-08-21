@@ -20,8 +20,8 @@ RUN mvn clean package -DskipTests
 # Runtime stage
 FROM openjdk:11-jre-slim
 
-# Install git for repository operations
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# Install git and maven for repository operations and validation
+RUN apt-get update && apt-get install -y git maven && rm -rf /var/lib/apt/lists/*
 
 # Create app user for security
 RUN groupadd -g 1001 appgroup && \

@@ -208,8 +208,9 @@ public class Orchestrator {
             
             if (result.getStatus() == TaskStatus.COMPLETED) {
                 taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
-                // Create next task in the pipeline (REPO)
-                createNextTask(task.getBuild(), TaskType.REPO, result.getMetadata());
+                // Create next task in the pipeline (REPO) with preserved payload
+                Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
+                createNextTask(task.getBuild(), TaskType.REPO, nextTaskPayload);
             } else {
                 taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
             }
@@ -246,7 +247,8 @@ public class Orchestrator {
                 taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
                 
                 // Create next task in the pipeline (RETRIEVE)
-                createNextTask(task.getBuild(), TaskType.RETRIEVE, result.getMetadata());
+                Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
+                createNextTask(task.getBuild(), TaskType.RETRIEVE, nextTaskPayload);
             } else {
                 taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
             }
@@ -282,7 +284,8 @@ public class Orchestrator {
             if (result.getStatus() == TaskStatus.COMPLETED) {
                 taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
                 // Create next task in the pipeline (PATCH)
-                createNextTask(task.getBuild(), TaskType.PATCH, result.getMetadata());
+                Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
+                createNextTask(task.getBuild(), TaskType.PATCH, nextTaskPayload);
             } else {
                 taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
             }
@@ -318,7 +321,8 @@ public class Orchestrator {
             if (result.getStatus() == TaskStatus.COMPLETED) {
                 taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
                 // Create next task in the pipeline (VALIDATE)
-                createNextTask(task.getBuild(), TaskType.VALIDATE, result.getMetadata());
+                Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
+                createNextTask(task.getBuild(), TaskType.VALIDATE, nextTaskPayload);
             } else {
                 taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
             }
@@ -356,7 +360,8 @@ public class Orchestrator {
             if (result.getStatus() == TaskStatus.COMPLETED) {
                 taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
                 // Create next task in the pipeline (CREATE_PR)
-                createNextTask(task.getBuild(), TaskType.CREATE_PR, result.getMetadata());
+                Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
+                createNextTask(task.getBuild(), TaskType.CREATE_PR, nextTaskPayload);
             } else {
                 taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
             }
@@ -452,18 +457,48 @@ public class Orchestrator {
      * @param taskType The type of task to create
      * @param metadata Optional metadata from previous task
      */
-    private void createNextTask(Build build, TaskType taskType, Map<String, Object> metadata) {
+    /**
+     * Preserves essential payload data when creating the next task in the pipeline.
+     * This ensures that key information like repoUrl, branch, commitSha, etc. 
+     * is not lost when transitioning between agents.
+     */
+    private Map<String, Object> preserveEssentialPayload(Task currentTask, Map<String, Object> newMetadata) {
+        Map<String, Object> preservedPayload = new HashMap<>();
+        
+        // Get current task payload
+        Map<String, Object> currentPayload = currentTask.getPayload();
+        if (currentPayload != null) {
+            // Preserve key data needed by subsequent agents
+            String[] essentialKeys = {"repoUrl", "branch", "commitSha", "buildLogs", "scm", "workingDirectory", "fixBranch"};
+            for (String key : essentialKeys) {
+                if (currentPayload.containsKey(key)) {
+                    preservedPayload.put(key, currentPayload.get(key));
+                }
+            }
+            logger.debug("Preserved essential payload keys: {}", preservedPayload.keySet());
+        }
+        
+        // Add new metadata (this can override preserved data if needed)
+        if (newMetadata != null) {
+            preservedPayload.putAll(newMetadata);
+            logger.debug("Added new metadata keys: {}", newMetadata.keySet());
+        }
+        
+        return preservedPayload;
+    }
+
+    private void createNextTask(Build build, TaskType taskType, Map<String, Object> payload) {
         Task nextTask = new Task(build, taskType);
         
-        // Add metadata from previous task if available
-        if (metadata != null && !metadata.isEmpty()) {
-            nextTask.setPayload(metadata);
+        // Set the provided payload
+        if (payload != null && !payload.isEmpty()) {
+            nextTask.setPayload(payload);
         }
         
         taskQueue.enqueue(nextTask);
         
-        logger.debug("Created next task: type={}, buildId={}, with metadata keys={}", 
-            taskType, build.getId(), metadata != null ? metadata.keySet() : "none");
+        logger.debug("Created next task: type={}, buildId={}, with payload keys={}", 
+            taskType, build.getId(), payload != null ? payload.keySet() : "none");
     }
     
     /**

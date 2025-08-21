@@ -93,14 +93,25 @@ public class ValidatorAgent implements Agent<ValidatePayload> {
      * Perform compilation validation using Maven or Gradle.
      */
     private ValidationResult performCompilationValidation(Task task, File workingDir, BuildTool buildTool) {
-        logger.info("Performing compilation validation using {}", buildTool);
+        logger.info("ValidatorAgent: Starting compilation validation for build {} using {}", task.getBuild().getId(), buildTool);
+        logger.debug("ValidatorAgent: Working directory: {}", workingDir.getAbsolutePath());
         
         CommandExecutor.CommandResult result;
         
         if (buildTool == BuildTool.MAVEN) {
+            logger.debug("ValidatorAgent: Executing Maven command: clean compile -DskipTests");
             result = commandExecutor.executeMaven("clean compile -DskipTests", workingDir);
         } else {
+            logger.debug("ValidatorAgent: Executing Gradle command: clean compileJava -x test");
             result = commandExecutor.executeGradle("clean compileJava -x test", workingDir);
+        }
+        
+        logger.info("ValidatorAgent: Compilation validation completed with exit code: {}", result.getExitCode());
+        if (result.isSuccessful()) {
+            logger.info("ValidatorAgent: ✅ Compilation validation PASSED for build {}", task.getBuild().getId());
+        } else {
+            logger.warn("ValidatorAgent: ❌ Compilation validation FAILED for build {} - errors in stderr/stdout", task.getBuild().getId());
+            logger.debug("ValidatorAgent: Compilation stderr: {}", result.getStderr());
         }
         
         // Store validation result
@@ -116,16 +127,27 @@ public class ValidatorAgent implements Agent<ValidatePayload> {
      * Perform test validation using Maven or Gradle with Spring Boot test execution.
      */
     private ValidationResult performTestValidation(Task task, File workingDir, BuildTool buildTool) {
-        logger.info("Performing test validation using {}", buildTool);
+        logger.info("ValidatorAgent: Starting test validation for build {} using {}", task.getBuild().getId(), buildTool);
+        logger.debug("ValidatorAgent: Working directory: {}", workingDir.getAbsolutePath());
         
         CommandExecutor.CommandResult result;
         
         if (buildTool == BuildTool.MAVEN) {
             // Use Spring Boot Maven plugin for proper classpath handling
+            logger.debug("ValidatorAgent: Executing Maven command: test -Dspring.profiles.active=test");
             result = commandExecutor.executeMaven("test -Dspring.profiles.active=test", workingDir);
         } else {
             // Use Gradle test task with Spring Boot plugin
+            logger.debug("ValidatorAgent: Executing Gradle command: test --info");
             result = commandExecutor.executeGradle("test --info", workingDir);
+        }
+        
+        logger.info("ValidatorAgent: Test validation completed with exit code: {}", result.getExitCode());
+        if (result.isSuccessful()) {
+            logger.info("ValidatorAgent: ✅ Test validation PASSED for build {}", task.getBuild().getId());
+        } else {
+            logger.warn("ValidatorAgent: ❌ Test validation FAILED for build {} - test failures or errors", task.getBuild().getId());
+            logger.debug("ValidatorAgent: Test stderr: {}", result.getStderr());
         }
         
         // Store validation result
@@ -141,14 +163,16 @@ public class ValidatorAgent implements Agent<ValidatePayload> {
      * Handle validation failure by extracting error context and determining retry strategy.
      */
     private TaskResult handleValidationFailure(Task task, ValidationResult validationResult, SpringProjectContext springContext) {
-        logger.warn("Validation failed for build {} - type: {}, exitCode: {}", 
+        logger.warn("ValidatorAgent: Validation failed for build {} - type: {}, exitCode: {}", 
                    task.getBuild().getId(), validationResult.getType(), validationResult.getExitCode());
         
         // Extract error information for enhanced context
         String errorContext = extractErrorContext(validationResult, springContext);
+        logger.info("ValidatorAgent: Extracted error context: {}", errorContext);
         
         // Determine if this is a retryable failure
         boolean isRetryable = isRetryableFailure(validationResult);
+        logger.info("ValidatorAgent: Failure is retryable: {} (attempt {}/{})", isRetryable, task.getAttempt(), task.getMaxAttempts());
         
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("validationType", validationResult.getType().name());
@@ -158,10 +182,10 @@ public class ValidatorAgent implements Agent<ValidatePayload> {
         metadata.put("buildTool", springContext.getBuildTool().name());
         
         if (isRetryable && task.getAttempt() < task.getMaxAttempts()) {
-            logger.info("Validation failure is retryable, will retry with enhanced context");
+            logger.info("ValidatorAgent: ⏳ Validation failure is retryable, will retry with enhanced context");
             return TaskResult.retry("Validation failed but retryable: " + errorContext);
         } else {
-            logger.info("Validation failure requires manual intervention");
+            logger.info("ValidatorAgent: ❌ Validation failure requires manual intervention or max attempts reached");
             return TaskResult.failure("Validation failed: " + errorContext, metadata);
         }
     }

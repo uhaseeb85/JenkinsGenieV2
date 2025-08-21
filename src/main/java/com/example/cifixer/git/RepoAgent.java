@@ -57,6 +57,9 @@ public class RepoAgent implements Agent<Map<String, Object>> {
         try {
             RepoPayload repoPayload = extractRepoPayload(payload);
             
+            // Set build ID from task (not from payload)
+            repoPayload.setBuildId(task.getBuild().getId());
+            
             // Create working directory for this build
             String workingDir = createWorkingDirectory(repoPayload.getBuildId());
             repoPayload.setWorkingDirectory(workingDir);
@@ -252,9 +255,12 @@ public class RepoAgent implements Agent<Map<String, Object>> {
      * Extracts RepoPayload from the generic payload map.
      */
     private RepoPayload extractRepoPayload(Map<String, Object> payload) {
+        logger.info("Extracting RepoPayload from payload with keys: {}", payload.keySet());
         RepoPayload repoPayload = new RepoPayload();
         
-        repoPayload.setRepoUrl((String) payload.get("repoUrl"));
+        String repoUrl = (String) payload.get("repoUrl");
+        logger.info("Extracted repoUrl from payload: {}", repoUrl);
+        repoPayload.setRepoUrl(repoUrl);
         repoPayload.setBranch((String) payload.get("branch"));
         repoPayload.setCommitSha((String) payload.get("commitSha"));
         

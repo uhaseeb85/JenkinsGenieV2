@@ -257,12 +257,8 @@ public class LlmClient {
     private String buildAnthropicRequest(String prompt) throws IOException {
         AnthropicRequest request = new AnthropicRequest();
         
-        // If using OpenRouter, strip the "anthropic/" prefix from model name if present
-        if ("openrouter".equalsIgnoreCase(apiProvider) && defaultModel.startsWith("anthropic/")) {
-            request.setModel(defaultModel.substring("anthropic/".length()));
-        } else {
-            request.setModel(defaultModel);
-        }
+        // Always use the full model name (OpenRouter requires provider prefix like "anthropic/claude-3.5-sonnet")
+        request.setModel(defaultModel);
         
         // Set max tokens for response generation
         request.setMaxTokens(maxTokens);

@@ -983,11 +983,12 @@ public class JenkinsWebhookPayload {
      * @return The extracted repository URL or null if not found
      */
     public String extractRepoUrl() {
-        logger.debug("Extracting repository URL from JenkinsWebhookPayload");
+        logger.info("Extracting repository URL from JenkinsWebhookPayload");
         
         // First, check if repoUrl is directly provided in the payload
+        logger.info("Direct repoUrl field value: {}", repoUrl);
         if (repoUrl != null && !repoUrl.isEmpty()) {
-            logger.debug("Found repository URL directly in payload: {}", repoUrl);
+            logger.info("Found repository URL directly in payload: {}", repoUrl);
             return repoUrl;
         }
         

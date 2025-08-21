@@ -54,6 +54,7 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
     );
     
     // File type scoring weights
+    private static final BigDecimal COMPILATION_ERROR_WEIGHT = new BigDecimal("120.0");
     private static final BigDecimal STACK_TRACE_WEIGHT = new BigDecimal("100.0");
     private static final BigDecimal SPRING_ERROR_WEIGHT = new BigDecimal("80.0");
     private static final BigDecimal BUILD_FILE_WEIGHT = new BigDecimal("70.0");
@@ -64,6 +65,14 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
     // Regex patterns for error analysis
     private static final Pattern STACK_TRACE_PATTERN = Pattern.compile(
         "at\\s+([\\w.$]+)\\.([\\w$]+)\\(([\\w.]+):(\\d+)\\)"
+    );
+    
+    private static final Pattern COMPILATION_ERROR_PATTERN = Pattern.compile(
+        "([A-Z]:[/\\\\][^\\s]+[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java)\\[\\d+,\\d+\\]|" +
+        "([/\\\\][^\\s]*[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java)\\[\\d+,\\d+\\]|" +
+        "([^\\s]+\\.java)\\[\\d+,\\d+\\]|" +
+        "([A-Z]:[/\\\\][^\\s]+[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java):|" +
+        "([/\\\\][^\\s]*[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java):"
     );
     
     private static final Pattern SPRING_CONTEXT_ERROR_PATTERN = Pattern.compile(
@@ -84,7 +93,10 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
         
         try {
             Build build = task.getBuild();
-            String workingDir = workingDirBase + "/" + build.getId();
+            
+            // Try to get working directory from payload first, fall back to default pattern
+            String workingDir = extractWorkingDirectory(payload, build);
+            logger.debug("Using working directory: {}", workingDir);
             
             // Get the plan for this build
             Optional<Plan> planOpt = planRepository.findByBuildId(build.getId());
@@ -182,25 +194,115 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
                                                               List<ErrorInfo> errors, 
                                                               SpringProjectContext springContext) throws IOException {
         
+        logger.info("🔍 STARTING CANDIDATE FILE ANALYSIS");
+        logger.info("Working directory: {}", workingDir);
+        logger.info("Total errors to analyze: {}", errors.size());
+        logger.info("Spring context loaded: {}", springContext != null);
+        
         Map<String, CandidateFileInfo> candidateMap = new HashMap<>();
         
-        // Add files from stack traces (highest priority)
+        // Add files from compilation errors (highest priority)
+        logger.info("📋 Phase 1: Analyzing compilation errors...");
+        addCompilationErrorFiles(candidateMap, errors, workingDir);
+        logger.info("Candidates after compilation errors: {}", candidateMap.size());
+        
+        // Add files from stack traces (high priority)
+        logger.info("📋 Phase 2: Analyzing stack traces...");
         addStackTraceFiles(candidateMap, errors, workingDir);
+        logger.info("Candidates after stack traces: {}", candidateMap.size());
         
         // Add files from Spring context errors
+        logger.info("📋 Phase 3: Analyzing Spring context errors...");
         addSpringContextFiles(candidateMap, errors, workingDir);
+        logger.info("Candidates after Spring context errors: {}", candidateMap.size());
         
         // Add Spring component files
+        logger.info("📋 Phase 4: Analyzing Spring components...");
         addSpringComponentFiles(candidateMap, workingDir, springContext);
+        logger.info("Candidates after Spring components: {}", candidateMap.size());
         
         // Add build files
+        logger.info("📋 Phase 5: Analyzing build files...");
         addBuildFiles(candidateMap, workingDir, springContext);
+        logger.info("Candidates after build files: {}", candidateMap.size());
         
         // Sort by score descending and limit results
-        return candidateMap.values().stream()
+        List<CandidateFileInfo> sortedCandidates = candidateMap.values().stream()
                 .sorted((a, b) -> b.getScore().compareTo(a.getScore()))
                 .limit(20) // Limit to top 20 candidates
                 .collect(Collectors.toList());
+        
+        logger.info("🎯 CANDIDATE FILE ANALYSIS COMPLETE");
+        logger.info("Total unique candidates found: {}", candidateMap.size());
+        logger.info("Top candidates returned: {}", sortedCandidates.size());
+        
+        // Log top 5 candidates for debugging
+        logger.info("=== TOP 5 CANDIDATES ===");
+        for (int i = 0; i < Math.min(5, sortedCandidates.size()); i++) {
+            CandidateFileInfo candidate = sortedCandidates.get(i);
+            logger.info("{}. {} (score: {}) - {}", 
+                i + 1, candidate.getFilePath(), candidate.getScore(), candidate.getReason());
+        }
+        
+        return sortedCandidates;
+    }
+    
+    /**
+     * Adds files mentioned in compilation errors with highest priority.
+     */
+    private void addCompilationErrorFiles(Map<String, CandidateFileInfo> candidateMap, 
+                                         List<ErrorInfo> errors, 
+                                         String workingDir) {
+        logger.info("=== COMPILATION ERROR FILE ANALYSIS ===");
+        logger.info("Analyzing {} errors for compilation file references", errors.size());
+        
+        int compilationErrorsFound = 0;
+        int filesAdded = 0;
+        
+        for (ErrorInfo error : errors) {
+            if (error.getErrorMessage() != null) {
+                logger.debug("Checking error message: {}", error.getErrorMessage().substring(0, Math.min(200, error.getErrorMessage().length())));
+                
+                Matcher matcher = COMPILATION_ERROR_PATTERN.matcher(error.getErrorMessage());
+                while (matcher.find()) {
+                    compilationErrorsFound++;
+                    String filePath = null;
+                    
+                    // Check each capture group to find the file path
+                    for (int i = 1; i <= matcher.groupCount(); i++) {
+                        String group = matcher.group(i);
+                        if (group != null && group.endsWith(".java")) {
+                            filePath = group;
+                            logger.debug("Found compilation error file path in group {}: {}", i, filePath);
+                            break;
+                        }
+                    }
+                    
+                    if (filePath != null) {
+                        // Convert absolute path to relative path if needed
+                        String relativePath = normalizeFilePath(filePath, workingDir);
+                        
+                        if (relativePath != null && fileExists(workingDir, relativePath)) {
+                            addOrUpdateCandidate(candidateMap, relativePath, COMPILATION_ERROR_WEIGHT, 
+                                "Compilation error in file: " + relativePath);
+                            filesAdded++;
+                            logger.info("✅ COMPILATION ERROR FILE ADDED: {} (weight: {})", relativePath, COMPILATION_ERROR_WEIGHT);
+                        } else {
+                            logger.warn("❌ COMPILATION ERROR FILE NOT FOUND: {} (normalized: {})", filePath, relativePath);
+                        }
+                    } else {
+                        logger.debug("Could not extract file path from compilation error match");
+                    }
+                }
+            }
+        }
+        
+        logger.info("=== COMPILATION ERROR ANALYSIS COMPLETE ===");
+        logger.info("Compilation errors found: {}, Files successfully added: {}", compilationErrorsFound, filesAdded);
+        
+        if (compilationErrorsFound == 0) {
+            logger.warn("⚠️  NO COMPILATION ERRORS DETECTED - This might indicate pattern matching issues");
+        }
     }
     
     /**
@@ -401,6 +503,45 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
     }
     
     /**
+     * Normalizes file path from compilation errors to relative path.
+     */
+    private String normalizeFilePath(String filePath, String workingDir) {
+        if (filePath == null) {
+            return null;
+        }
+        
+        // If it's already a relative path starting with src/, use it directly
+        if (filePath.startsWith("src/") || filePath.startsWith("src\\")) {
+            return filePath.replace('\\', '/');
+        }
+        
+        // If it's an absolute path, try to extract the relative part
+        if (filePath.contains("/src/main/java/") || filePath.contains("\\src\\main\\java\\")) {
+            int srcIndex = filePath.indexOf("/src/main/java/");
+            if (srcIndex == -1) {
+                srcIndex = filePath.indexOf("\\src\\main\\java\\");
+            }
+            if (srcIndex != -1) {
+                return filePath.substring(srcIndex + 1).replace('\\', '/');
+            }
+        }
+        
+        // If it's just a filename, look for it in src/main/java
+        if (!filePath.contains("/") && !filePath.contains("\\") && filePath.endsWith(".java")) {
+            // This would require searching the directory tree, for now return null
+            return null;
+        }
+        
+        // Try to get relative path using existing method
+        try {
+            return getRelativePath(workingDir, filePath);
+        } catch (Exception e) {
+            logger.debug("Could not normalize file path {}: {}", filePath, e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
      * Saves candidate files to the database.
      */
     private void saveCandidateFiles(Build build, List<CandidateFileInfo> candidates) {
@@ -503,5 +644,23 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
         MISSING_DEPENDENCY,
         TEST_FAILURE,
         UNKNOWN
+    }
+    
+    /**
+     * Extract working directory from payload or use default pattern.
+     */
+    private String extractWorkingDirectory(Map<String, Object> payload, Build build) {
+        // Try to get working directory from payload first
+        Object workingDirObj = payload.get("workingDirectory");
+        if (workingDirObj != null) {
+            String workingDir = workingDirObj.toString();
+            logger.info("Using working directory from payload: {}", workingDir);
+            return workingDir;
+        }
+        
+        // Fall back to default pattern
+        String defaultDir = workingDirBase + "/build-" + build.getId();
+        logger.info("Using default working directory pattern: {}", defaultDir);
+        return defaultDir;
     }
 }

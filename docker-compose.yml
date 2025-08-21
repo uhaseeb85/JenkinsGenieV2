@@ -86,7 +86,7 @@ services:
       
       # Security configuration
       CIFIXER_WEBHOOK_SIGNATURE_VALIDATION: ${WEBHOOK_SIGNATURE_VALIDATION:-true}
-      CIFIXER_SSL_VERIFICATION: ${SSL_VERIFICATION:-true}
+      SSL_VERIFICATION_ENABLED: ${SSL_VERIFICATION_ENABLED:-true}
     volumes:
       - work_data:/app/work
       - app_logs:/app/logs
