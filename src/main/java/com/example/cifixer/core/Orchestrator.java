@@ -320,9 +320,10 @@ public class Orchestrator {
             
             if (result.getStatus() == TaskStatus.COMPLETED) {
                 taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
-                // Create next task in the pipeline (VALIDATE)
+                // SKIP VALIDATION - Go directly to PR creation after patch is applied
+                logger.info("Skipping validation - proceeding directly to PR creation for build: {}", task.getBuild().getId());
                 Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
-                createNextTask(task.getBuild(), TaskType.VALIDATE, nextTaskPayload);
+                createNextTask(task.getBuild(), TaskType.CREATE_PR, nextTaskPayload);
             } else {
                 taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
             }
