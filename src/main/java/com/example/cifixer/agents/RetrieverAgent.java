@@ -19,14 +19,12 @@ import org.springframework.stereotype.Component;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Agent responsible for identifying and ranking candidate files for Spring-aware fixes.
@@ -45,34 +43,32 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
     private String workingDirBase;
     
     // Spring annotation patterns for prioritization
-    private static final Set<String> HIGH_PRIORITY_ANNOTATIONS = Set.of(
-        "@SpringBootApplication", "@Configuration", "@EnableAutoConfiguration"
-    );
-    
-    private static final Set<String> MEDIUM_PRIORITY_ANNOTATIONS = Set.of(
-        "@Controller", "@RestController", "@Service", "@Repository", "@Component"
-    );
-    
-    // File type scoring weights
+    // File type scoring weights - only keeping what we actually use
     private static final BigDecimal COMPILATION_ERROR_WEIGHT = new BigDecimal("120.0");
     private static final BigDecimal STACK_TRACE_WEIGHT = new BigDecimal("100.0");
     private static final BigDecimal SPRING_ERROR_WEIGHT = new BigDecimal("80.0");
-    private static final BigDecimal BUILD_FILE_WEIGHT = new BigDecimal("70.0");
-    private static final BigDecimal HIGH_PRIORITY_ANNOTATION_WEIGHT = new BigDecimal("60.0");
-    private static final BigDecimal MEDIUM_PRIORITY_ANNOTATION_WEIGHT = new BigDecimal("40.0");
-    private static final BigDecimal LEXICAL_MATCH_WEIGHT = new BigDecimal("10.0");
     
-    // Regex patterns for error analysis
+    // Regex patterns for error analysis - focused on actual Maven [ERROR] lines
     private static final Pattern STACK_TRACE_PATTERN = Pattern.compile(
         "at\\s+([\\w.$]+)\\.([\\w$]+)\\(([\\w.]+):(\\d+)\\)"
     );
     
+    // Updated pattern to match the actual Jenkins error format you showed
     private static final Pattern COMPILATION_ERROR_PATTERN = Pattern.compile(
+        // Match the exact format: [ERROR] /C:/path/to/file.java:[line,col] 
+        "\\[ERROR\\]\\s+([A-Z]:[/\\\\][^\\s]+\\.java):|" +
+        // Match: [ERROR] /path/to/file.java:[line,col]
+        "\\[ERROR\\]\\s+([/\\\\][^\\s]+\\.java):|" +
+        // Match just the file part without full path
+        "\\[ERROR\\].*?([A-Za-z][A-Za-z0-9]*\\.java):|" +
+        // Backup patterns for other formats
         "([A-Z]:[/\\\\][^\\s]+[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java)\\[\\d+,\\d+\\]|" +
         "([/\\\\][^\\s]*[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java)\\[\\d+,\\d+\\]|" +
-        "([^\\s]+\\.java)\\[\\d+,\\d+\\]|" +
+        "([A-Za-z][A-Za-z0-9]*\\.java)\\[\\d+,\\d+\\]|" +
         "([A-Z]:[/\\\\][^\\s]+[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java):|" +
-        "([/\\\\][^\\s]*[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java):"
+        "([/\\\\][^\\s]*[/\\\\]src[/\\\\]main[/\\\\]java[/\\\\].+?\\.java):|" +
+        // Match any .java file mentioned
+        "([A-Za-z][A-Za-z0-9]*\\.java)"
     );
     
     private static final Pattern SPRING_CONTEXT_ERROR_PATTERN = Pattern.compile(
@@ -188,60 +184,58 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
     }
     
     /**
-     * Finds and ranks candidate files based on Spring-aware scoring.
+     * Finds and ranks candidate files based ONLY on actual compilation errors.
+     * This method focuses exclusively on files mentioned in [ERROR] lines to avoid
+     * selecting random Spring components that aren't related to the build failure.
      */
     private List<CandidateFileInfo> findAndRankCandidateFiles(String workingDir, 
                                                               List<ErrorInfo> errors, 
                                                               SpringProjectContext springContext) throws IOException {
         
-        logger.info("🔍 STARTING CANDIDATE FILE ANALYSIS");
+        logger.info("🔍 STARTING FOCUSED CANDIDATE FILE ANALYSIS");
         logger.info("Working directory: {}", workingDir);
         logger.info("Total errors to analyze: {}", errors.size());
-        logger.info("Spring context loaded: {}", springContext != null);
+        logger.info("FOCUS: Only files with actual [ERROR] compilation messages will be selected");
         
         Map<String, CandidateFileInfo> candidateMap = new HashMap<>();
         
-        // Add files from compilation errors (highest priority)
-        logger.info("📋 Phase 1: Analyzing compilation errors...");
+        // ONLY add files from actual compilation errors - no random Spring files
+        logger.info("📋 ONLY Phase: Analyzing actual compilation errors from [ERROR] lines...");
         addCompilationErrorFiles(candidateMap, errors, workingDir);
         logger.info("Candidates after compilation errors: {}", candidateMap.size());
         
-        // Add files from stack traces (high priority)
-        logger.info("📋 Phase 2: Analyzing stack traces...");
-        addStackTraceFiles(candidateMap, errors, workingDir);
-        logger.info("Candidates after stack traces: {}", candidateMap.size());
+        // If no compilation errors found, add stack trace files as fallback
+        if (candidateMap.isEmpty()) {
+            logger.warn("⚠️ No compilation error files found, adding stack trace files as fallback...");
+            addStackTraceFiles(candidateMap, errors, workingDir);
+            logger.info("Candidates after stack traces: {}", candidateMap.size());
+        }
         
-        // Add files from Spring context errors
-        logger.info("📋 Phase 3: Analyzing Spring context errors...");
-        addSpringContextFiles(candidateMap, errors, workingDir);
-        logger.info("Candidates after Spring context errors: {}", candidateMap.size());
+        // If still no files, add Spring context error files as last resort
+        if (candidateMap.isEmpty()) {
+            logger.warn("⚠️ No stack trace files found, adding Spring context error files as last resort...");
+            addSpringContextFiles(candidateMap, errors, workingDir);
+            logger.info("Candidates after Spring context errors: {}", candidateMap.size());
+        }
         
-        // Add Spring component files
-        logger.info("📋 Phase 4: Analyzing Spring components...");
-        addSpringComponentFiles(candidateMap, workingDir, springContext);
-        logger.info("Candidates after Spring components: {}", candidateMap.size());
-        
-        // Add build files
-        logger.info("📋 Phase 5: Analyzing build files...");
-        addBuildFiles(candidateMap, workingDir, springContext);
-        logger.info("Candidates after build files: {}", candidateMap.size());
-        
-        // Sort by score descending and limit results
+        // Convert to list and sort by score
         List<CandidateFileInfo> sortedCandidates = candidateMap.values().stream()
                 .sorted((a, b) -> b.getScore().compareTo(a.getScore()))
-                .limit(20) // Limit to top 20 candidates
                 .collect(Collectors.toList());
         
-        logger.info("🎯 CANDIDATE FILE ANALYSIS COMPLETE");
-        logger.info("Total unique candidates found: {}", candidateMap.size());
-        logger.info("Top candidates returned: {}", sortedCandidates.size());
+        logger.info("🎯 FOCUSED CANDIDATE FILE ANALYSIS COMPLETE");
+        logger.info("Total candidates found: {}", sortedCandidates.size());
         
-        // Log top 5 candidates for debugging
-        logger.info("=== TOP 5 CANDIDATES ===");
-        for (int i = 0; i < Math.min(5, sortedCandidates.size()); i++) {
+        // Log all candidates for debugging (should be very few)
+        logger.info("=== ALL CANDIDATES (COMPILATION ERRORS ONLY) ===");
+        for (int i = 0; i < sortedCandidates.size(); i++) {
             CandidateFileInfo candidate = sortedCandidates.get(i);
             logger.info("{}. {} (score: {}) - {}", 
                 i + 1, candidate.getFilePath(), candidate.getScore(), candidate.getReason());
+        }
+        
+        if (sortedCandidates.isEmpty()) {
+            logger.error("❌ NO CANDIDATE FILES FOUND - This indicates the error parsing is broken!");
         }
         
         return sortedCandidates;
@@ -249,59 +243,80 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
     
     /**
      * Adds files mentioned in compilation errors with highest priority.
+     * FOCUSES ONLY ON ACTUAL FILES FROM ERRORINFO OBJECTS.
      */
     private void addCompilationErrorFiles(Map<String, CandidateFileInfo> candidateMap, 
                                          List<ErrorInfo> errors, 
                                          String workingDir) {
-        logger.info("=== COMPILATION ERROR FILE ANALYSIS ===");
-        logger.info("Analyzing {} errors for compilation file references", errors.size());
+        logger.info("=== COMPILATION ERROR FILE ANALYSIS (FOCUSED MODE) ===");
+        logger.info("Analyzing {} errors for files mentioned in compilation errors", errors.size());
+        logger.info("ONLY files explicitly found in ErrorInfo.filePath will be selected");
         
-        int compilationErrorsFound = 0;
         int filesAdded = 0;
         
         for (ErrorInfo error : errors) {
-            if (error.getErrorMessage() != null) {
-                logger.debug("Checking error message: {}", error.getErrorMessage().substring(0, Math.min(200, error.getErrorMessage().length())));
+            logger.info("🔍 ANALYZING ERROR: Type={}, FilePath={}, Message={}", 
+                error.getErrorType(), 
+                error.getFilePath(),
+                error.getErrorMessage() != null ? error.getErrorMessage().substring(0, Math.min(100, error.getErrorMessage().length())) + "..." : "null");
+            
+            // Check if this error has a file path (from PlannerAgent parsing)
+            if (error.getFilePath() != null && error.getFilePath().endsWith(".java")) {
+                String filePath = error.getFilePath();
+                String relativePath = normalizeFilePath(filePath, workingDir);
                 
-                Matcher matcher = COMPILATION_ERROR_PATTERN.matcher(error.getErrorMessage());
-                while (matcher.find()) {
-                    compilationErrorsFound++;
-                    String filePath = null;
-                    
-                    // Check each capture group to find the file path
-                    for (int i = 1; i <= matcher.groupCount(); i++) {
-                        String group = matcher.group(i);
-                        if (group != null && group.endsWith(".java")) {
-                            filePath = group;
-                            logger.debug("Found compilation error file path in group {}: {}", i, filePath);
-                            break;
-                        }
-                    }
-                    
-                    if (filePath != null) {
-                        // Convert absolute path to relative path if needed
-                        String relativePath = normalizeFilePath(filePath, workingDir);
+                if (relativePath != null && fileExists(workingDir, relativePath)) {
+                    addOrUpdateCandidate(candidateMap, relativePath, COMPILATION_ERROR_WEIGHT, 
+                        "ACTUAL COMPILATION ERROR: " + relativePath + " (" + error.getErrorType() + ")");
+                    filesAdded++;
+                    logger.info("✅ COMPILATION ERROR FILE ADDED: {} (weight: {})", relativePath, COMPILATION_ERROR_WEIGHT);
+                } else {
+                    logger.warn("❌ COMPILATION ERROR FILE NOT FOUND: {} (normalized: {})", filePath, relativePath);
+                }
+            } else {
+                logger.debug("No file path in ErrorInfo, trying to parse from message...");
+                
+                // Fallback: try to parse from the error message as before
+                if (error.getErrorMessage() != null) {
+                    Matcher matcher = COMPILATION_ERROR_PATTERN.matcher(error.getErrorMessage());
+                    while (matcher.find()) {
+                        String filePath = null;
                         
-                        if (relativePath != null && fileExists(workingDir, relativePath)) {
-                            addOrUpdateCandidate(candidateMap, relativePath, COMPILATION_ERROR_WEIGHT, 
-                                "Compilation error in file: " + relativePath);
-                            filesAdded++;
-                            logger.info("✅ COMPILATION ERROR FILE ADDED: {} (weight: {})", relativePath, COMPILATION_ERROR_WEIGHT);
-                        } else {
-                            logger.warn("❌ COMPILATION ERROR FILE NOT FOUND: {} (normalized: {})", filePath, relativePath);
+                        logger.debug("🎯 REGEX MATCH FOUND! Groups:");
+                        // Check each capture group to find the file path
+                        for (int i = 1; i <= matcher.groupCount(); i++) {
+                            String group = matcher.group(i);
+                            logger.debug("  Group {}: {}", i, group);
+                            if (group != null && group.endsWith(".java")) {
+                                filePath = group;
+                                logger.info("📁 Selected file path from group {}: {}", i, filePath);
+                                break;
+                            }
                         }
-                    } else {
-                        logger.debug("Could not extract file path from compilation error match");
+                        
+                        if (filePath != null) {
+                            String relativePath = normalizeFilePath(filePath, workingDir);
+                            
+                            if (relativePath != null && fileExists(workingDir, relativePath)) {
+                                addOrUpdateCandidate(candidateMap, relativePath, COMPILATION_ERROR_WEIGHT, 
+                                    "PARSED COMPILATION ERROR: " + relativePath);
+                                filesAdded++;
+                                logger.info("✅ PARSED COMPILATION ERROR FILE ADDED: {} (weight: {})", relativePath, COMPILATION_ERROR_WEIGHT);
+                            } else {
+                                logger.warn("❌ PARSED COMPILATION ERROR FILE NOT FOUND: {} (normalized: {})", filePath, relativePath);
+                            }
+                        }
                     }
                 }
             }
         }
         
         logger.info("=== COMPILATION ERROR ANALYSIS COMPLETE ===");
-        logger.info("Compilation errors found: {}, Files successfully added: {}", compilationErrorsFound, filesAdded);
+        logger.info("Files successfully added: {}", filesAdded);
         
-        if (compilationErrorsFound == 0) {
-            logger.warn("⚠️  NO COMPILATION ERRORS DETECTED - This might indicate pattern matching issues");
+        if (filesAdded == 0) {
+            logger.error("❌ NO COMPILATION ERROR FILES ADDED!");
+            logger.error("This means no ErrorInfo objects had valid .java file paths");
         }
     }
     
@@ -350,62 +365,6 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
     }
     
     /**
-     * Adds Spring component files based on annotations.
-     */
-    private void addSpringComponentFiles(Map<String, CandidateFileInfo> candidateMap, 
-                                        String workingDir, 
-                                        SpringProjectContext springContext) throws IOException {
-        
-        Path srcPath = Paths.get(workingDir, "src");
-        if (!Files.exists(srcPath)) {
-            return;
-        }
-        
-        try (Stream<Path> paths = Files.walk(srcPath)) {
-            paths.filter(path -> path.toString().endsWith(".java"))
-                 .forEach(javaFile -> {
-                     try {
-                         String content = new String(Files.readAllBytes(javaFile));
-                         String relativePath = getRelativePath(workingDir, javaFile.toString());
-                         
-                         BigDecimal weight = calculateSpringAnnotationWeight(content);
-                         if (weight.compareTo(BigDecimal.ZERO) > 0) {
-                             String reason = "Spring component with annotations: " + 
-                                           getFoundAnnotations(content);
-                             addOrUpdateCandidate(candidateMap, relativePath, weight, reason);
-                         }
-                     } catch (IOException e) {
-                         logger.debug("Could not read Java file {}: {}", javaFile, e.getMessage());
-                     }
-                 });
-        }
-    }
-    
-    /**
-     * Adds build files (pom.xml, build.gradle).
-     */
-    private void addBuildFiles(Map<String, CandidateFileInfo> candidateMap, 
-                              String workingDir, 
-                              SpringProjectContext springContext) {
-        
-        String buildFile = springContext.getBuildTool().getBuildFile();
-        if (fileExists(workingDir, buildFile)) {
-            addOrUpdateCandidate(candidateMap, buildFile, BUILD_FILE_WEIGHT, 
-                "Build configuration file");
-        }
-        
-        // Also check for additional build files
-        if (fileExists(workingDir, "pom.xml")) {
-            addOrUpdateCandidate(candidateMap, "pom.xml", BUILD_FILE_WEIGHT, 
-                "Maven build file");
-        }
-        if (fileExists(workingDir, "build.gradle")) {
-            addOrUpdateCandidate(candidateMap, "build.gradle", BUILD_FILE_WEIGHT, 
-                "Gradle build file");
-        }
-    }
-    
-    /**
      * Adds or updates a candidate file with cumulative scoring.
      */
     private void addOrUpdateCandidate(Map<String, CandidateFileInfo> candidateMap, 
@@ -427,48 +386,6 @@ public class RetrieverAgent implements Agent<Map<String, Object>> {
             candidateMap.put(filePath, candidate);
         }
     }
-    
-    /**
-     * Calculates Spring annotation weight for a Java file.
-     */
-    private BigDecimal calculateSpringAnnotationWeight(String content) {
-        BigDecimal totalWeight = BigDecimal.ZERO;
-        
-        for (String annotation : HIGH_PRIORITY_ANNOTATIONS) {
-            if (content.contains(annotation)) {
-                totalWeight = totalWeight.add(HIGH_PRIORITY_ANNOTATION_WEIGHT);
-            }
-        }
-        
-        for (String annotation : MEDIUM_PRIORITY_ANNOTATIONS) {
-            if (content.contains(annotation)) {
-                totalWeight = totalWeight.add(MEDIUM_PRIORITY_ANNOTATION_WEIGHT);
-            }
-        }
-        
-        return totalWeight;
-    }
-    
-    /**
-     * Gets found Spring annotations in content for reasoning.
-     */
-    private String getFoundAnnotations(String content) {
-        List<String> found = new ArrayList<>();
-        
-        for (String annotation : HIGH_PRIORITY_ANNOTATIONS) {
-            if (content.contains(annotation)) {
-                found.add(annotation);
-            }
-        }
-        for (String annotation : MEDIUM_PRIORITY_ANNOTATIONS) {
-            if (content.contains(annotation)) {
-                found.add(annotation);
-            }
-        }
-        
-        return found.isEmpty() ? "none" : String.join(", ", found);
-    }
-    
     /**
      * Converts a Java class name to file path.
      */
