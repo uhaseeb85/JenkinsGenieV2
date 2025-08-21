@@ -37,6 +37,27 @@ public class JenkinsWebhookPayload {
     
     private String url;
     
+    @JsonProperty("repoUrl")
+    private String repoUrl;
+    
+    @JsonProperty("branch")
+    private String branch;
+    
+    @JsonProperty("commitSha")
+    private String commitSha;
+    
+    @JsonProperty("job")
+    private String job;
+    
+    @JsonProperty("buildNumber")
+    private Integer buildNumber;
+    
+    @JsonProperty("buildLogs")
+    private String buildLogs;
+    
+    @JsonProperty("metadata")
+    private Map<String, Object> metadata;
+    
     public JenkinsWebhookPayload() {
     }
     
@@ -964,6 +985,12 @@ public class JenkinsWebhookPayload {
     public String extractRepoUrl() {
         logger.debug("Extracting repository URL from JenkinsWebhookPayload");
         
+        // First, check if repoUrl is directly provided in the payload
+        if (repoUrl != null && !repoUrl.isEmpty()) {
+            logger.debug("Found repository URL directly in payload: {}", repoUrl);
+            return repoUrl;
+        }
+        
         if (build != null && build.getScm() != null) {
             BuildData.ScmData scm = build.getScm();
             logger.debug("SCM data available in JenkinsWebhookPayload: {}", scm);
@@ -1224,71 +1251,67 @@ public class JenkinsWebhookPayload {
     
     // Backward compatibility methods
     public String getJob() {
-        return extractJobName();
+        return job != null ? job : extractJobName();
     }
     
     public Integer getBuildNumber() {
-        return extractBuildNumber();
+        return buildNumber != null ? buildNumber : extractBuildNumber();
     }
     
     public String getBranch() {
-        return extractBranchName();
+        return branch != null ? branch : extractBranchName();
     }
     
     public String getRepoUrl() {
-        return extractRepoUrl();
+        return repoUrl != null ? repoUrl : extractRepoUrl();
     }
     
     public String getCommitSha() {
-        return extractCommitSha();
+        return commitSha != null ? commitSha : extractCommitSha();
     }
     
     public String getBuildLogs() {
-        return extractBuildLogs();
+        return buildLogs != null ? buildLogs : extractBuildLogs();
     }
     
     public Map<String, Object> getMetadata() {
+        if (metadata != null) {
+            return metadata;
+        }
         // Return metadata from the build parameters if available
         if (build != null && build.getParameters() != null) {
-            return new java.util.HashMap<>((Map<String, Object>) (Map<?, ?>) build.getParameters());
+            return new java.util.HashMap<>(build.getParameters());
         }
         return null;
     }
     
-    // Backward compatibility setter methods (no-op implementations)
+    // Backward compatibility setter methods
     public void setJob(String job) {
-        // No-op for backward compatibility
-        // In a real implementation, we might set this in a field or convert to the new structure
+        this.job = job;
     }
     
     public void setBuildNumber(Integer buildNumber) {
-        // No-op for backward compatibility
-        // In a real implementation, we might set this in a field or convert to the new structure
+        this.buildNumber = buildNumber;
     }
     
     public void setBranch(String branch) {
-        // No-op for backward compatibility
-        // In a real implementation, we might set this in a field or convert to the new structure
+        this.branch = branch;
     }
     
     public void setRepoUrl(String repoUrl) {
-        // No-op for backward compatibility
-        // In a real implementation, we might set this in a field or convert to the new structure
+        this.repoUrl = repoUrl;
     }
     
     public void setCommitSha(String commitSha) {
-        // No-op for backward compatibility
-        // In a real implementation, we might set this in a field or convert to the new structure
+        this.commitSha = commitSha;
     }
     
     public void setBuildLogs(String buildLogs) {
-        // No-op for backward compatibility
-        // In a real implementation, we might set this in a field or convert to the new structure
+        this.buildLogs = buildLogs;
     }
     
     public void setMetadata(Map<String, Object> metadata) {
-        // No-op for backward compatibility
-        // In a real implementation, we might set this in a field or convert to the new structure
+        this.metadata = metadata;
     }
     
     @Override

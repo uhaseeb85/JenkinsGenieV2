@@ -72,12 +72,25 @@ public class PlannerAgent implements Agent<Map<String, Object>> {
             Build build = task.getBuild();
             String buildLogs = extractBuildLogs(payload);
             
+            logger.debug("PlannerAgent received payload with keys: {}", payload.keySet());
+            logger.debug("Build logs length: {}", buildLogs != null ? buildLogs.length() : 0);
+            
             if (buildLogs == null || buildLogs.trim().isEmpty()) {
+                logger.warn("No build logs found in payload for build: {}", build.getId());
                 return TaskResult.failure("No build logs found in payload");
+            }
+            
+            // Log a sample of the build logs for debugging
+            if (buildLogs.length() > 500) {
+                logger.debug("Build logs sample (first 500 chars): {}", buildLogs.substring(0, 500));
+            } else {
+                logger.debug("Full build logs: {}", buildLogs);
             }
             
             // Parse logs to identify errors
             List<ErrorInfo> errors = parseSpringProjectLogs(buildLogs);
+            
+            logger.info("Found {} errors in build logs for build: {}", errors.size(), build.getId());
             
             if (errors.isEmpty()) {
                 logger.warn("No recognizable Spring/Java errors found in logs for build: {}", build.getId());
@@ -115,6 +128,8 @@ public class PlannerAgent implements Agent<Map<String, Object>> {
      * Parses Spring project build logs to identify various error types.
      */
     public List<ErrorInfo> parseSpringProjectLogs(String logs) {
+        logger.debug("Starting to parse build logs, total length: {}", logs.length());
+        
         List<ErrorInfo> errors = new ArrayList<>();
         
         // Limit log parsing to last 300 lines for performance
@@ -122,19 +137,45 @@ public class PlannerAgent implements Agent<Map<String, Object>> {
         int startIndex = Math.max(0, lines.length - 300);
         String limitedLogs = String.join("\n", Arrays.copyOfRange(lines, startIndex, lines.length));
         
+        logger.debug("Parsing last {} lines of logs (from line {} to {})", 
+            lines.length - startIndex, startIndex, lines.length);
+        
         // Parse different error types
-        errors.addAll(parseMavenCompilerErrors(limitedLogs));
-        errors.addAll(parseGradleCompilerErrors(limitedLogs));
-        errors.addAll(parseSpringContextErrors(limitedLogs));
-        errors.addAll(parseJavaStackTraces(limitedLogs));
-        errors.addAll(parseDependencyErrors(limitedLogs));
-        errors.addAll(parseTestFailures(limitedLogs));
+        List<ErrorInfo> mavenErrors = parseMavenCompilerErrors(limitedLogs);
+        logger.debug("Found {} Maven compiler errors", mavenErrors.size());
+        errors.addAll(mavenErrors);
+        
+        List<ErrorInfo> gradleErrors = parseGradleCompilerErrors(limitedLogs);
+        logger.debug("Found {} Gradle compiler errors", gradleErrors.size());
+        errors.addAll(gradleErrors);
+        
+        List<ErrorInfo> springErrors = parseSpringContextErrors(limitedLogs);
+        logger.debug("Found {} Spring context errors", springErrors.size());
+        errors.addAll(springErrors);
+        
+        List<ErrorInfo> stackTraceErrors = parseJavaStackTraces(limitedLogs);
+        logger.debug("Found {} Java stack trace errors", stackTraceErrors.size());
+        errors.addAll(stackTraceErrors);
+        
+        List<ErrorInfo> dependencyErrors = parseDependencyErrors(limitedLogs);
+        logger.debug("Found {} dependency errors", dependencyErrors.size());
+        errors.addAll(dependencyErrors);
+        
+        List<ErrorInfo> testErrors = parseTestFailures(limitedLogs);
+        logger.debug("Found {} test failures", testErrors.size());
+        errors.addAll(testErrors);
+        
+        logger.info("Total errors found: {} (before deduplication)", errors.size());
         
         // Remove duplicates and sort by priority
-        return errors.stream()
+        List<ErrorInfo> deduplicatedErrors = errors.stream()
             .distinct()
             .sorted(this::compareErrorPriority)
             .collect(Collectors.toList());
+            
+        logger.info("Final error count after deduplication: {}", deduplicatedErrors.size());
+        
+        return deduplicatedErrors;
     }
     
     private List<ErrorInfo> parseMavenCompilerErrors(String logs) {

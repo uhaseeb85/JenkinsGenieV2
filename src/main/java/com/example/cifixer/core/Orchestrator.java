@@ -1,7 +1,7 @@
 package com.example.cifixer.core;
 
-import com.example.cifixer.agents.NotificationAgent;
-import com.example.cifixer.agents.NotifyPayload;
+import com.example.cifixer.agents.*;
+import com.example.cifixer.git.RepoAgent;
 import com.example.cifixer.store.Build;
 import com.example.cifixer.store.BuildRepository;
 import com.example.cifixer.store.BuildStatus;
@@ -34,6 +34,24 @@ public class Orchestrator {
     
     @Autowired
     private NotificationAgent notificationAgent;
+    
+    @Autowired
+    private PlannerAgent plannerAgent;
+    
+    @Autowired
+    private RepoAgent repoAgent;
+    
+    @Autowired
+    private RetrieverAgent retrieverAgent;
+    
+    @Autowired
+    private CodeFixAgent codeFixAgent;
+    
+    @Autowired
+    private ValidatorAgent validatorAgent;
+    
+    @Autowired
+    private PrAgent prAgent;
     
     @Autowired
     private ObjectMapper objectMapper;
@@ -168,83 +186,224 @@ public class Orchestrator {
     }
     
     /**
-     * Placeholder for PLAN task handling.
+     * Handles PLAN task by calling the PlannerAgent.
      */
     private void handlePlanTask(Task task) {
         logger.info("Processing PLAN task: id={}", task.getId());
         
-        // Placeholder: Mark as completed for now
-        // In task 5, this will call PlannerAgent
-        taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED);
-        
-        // Create next task in the pipeline (REPO)
-        createNextTask(task.getBuild(), TaskType.REPO);
+        try {
+            // Convert task payload to the format expected by PlannerAgent
+            Map<String, Object> payload = task.getPayload();
+            if (payload == null) {
+                payload = new HashMap<>();
+            }
+            
+            logger.debug("Calling PlannerAgent with payload: {}", payload.keySet());
+            
+            // Call the actual PlannerAgent
+            TaskResult result = plannerAgent.handle(task, payload);
+            
+            logger.info("PlannerAgent result: status={}, message={}", 
+                result.getStatus(), result.getMessage());
+            
+            if (result.getStatus() == TaskStatus.COMPLETED) {
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
+                // Create next task in the pipeline (REPO)
+                createNextTask(task.getBuild(), TaskType.REPO, result.getMetadata());
+            } else {
+                taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error in PlannerAgent for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "PlannerAgent failed: " + e.getMessage());
+        }
     }
     
     /**
-     * Placeholder for REPO task handling.
+     * Handles REPO task by calling the RepoAgent.
      */
     private void handleRepoTask(Task task) {
         logger.info("Processing REPO task: id={}", task.getId());
         
-        // Placeholder: Mark as completed for now
-        // In task 6, this will call RepoAgent
-        taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED);
-        
-        // Create next task in the pipeline (RETRIEVE)
-        createNextTask(task.getBuild(), TaskType.RETRIEVE);
+        try {
+            // Get task payload as Map<String, Object>
+            Map<String, Object> payload = task.getPayload();
+            if (payload == null) {
+                payload = new HashMap<>();
+            }
+            
+            logger.debug("Calling RepoAgent for repository operations with payload keys: {}", payload.keySet());
+            
+            // Call the actual RepoAgent
+            TaskResult result = repoAgent.handle(task, payload);
+            
+            logger.info("RepoAgent result: status={}, message={}", 
+                result.getStatus(), result.getMessage());
+            
+            if (result.getStatus() == TaskStatus.COMPLETED) {
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
+                
+                // Create next task in the pipeline (RETRIEVE)
+                createNextTask(task.getBuild(), TaskType.RETRIEVE, result.getMetadata());
+            } else {
+                taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error in RepoAgent for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "RepoAgent failed: " + e.getMessage());
+        }
     }
     
     /**
-     * Placeholder for RETRIEVE task handling.
+     * Handles RETRIEVE task by calling the RetrieverAgent.
      */
     private void handleRetrieveTask(Task task) {
         logger.info("Processing RETRIEVE task: id={}", task.getId());
         
-        // Placeholder: Mark as completed for now
-        taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED);
-        
-        // Create next task in the pipeline (PATCH)
-        createNextTask(task.getBuild(), TaskType.PATCH);
+        try {
+            // Convert task payload
+            Map<String, Object> payload = task.getPayload();
+            if (payload == null) {
+                payload = new HashMap<>();
+            }
+            
+            logger.debug("Calling RetrieverAgent with payload: {}", payload.keySet());
+            
+            // Call the actual RetrieverAgent
+            TaskResult result = retrieverAgent.handle(task, payload);
+            
+            logger.info("RetrieverAgent result: status={}, message={}", 
+                result.getStatus(), result.getMessage());
+            
+            if (result.getStatus() == TaskStatus.COMPLETED) {
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
+                // Create next task in the pipeline (PATCH)
+                createNextTask(task.getBuild(), TaskType.PATCH, result.getMetadata());
+            } else {
+                taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error in RetrieverAgent for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "RetrieverAgent failed: " + e.getMessage());
+        }
     }
     
     /**
-     * Placeholder for PATCH task handling.
+     * Handles PATCH task by calling the CodeFixAgent.
      */
     private void handlePatchTask(Task task) {
         logger.info("Processing PATCH task: id={}", task.getId());
         
-        // Placeholder: Mark as completed for now
-        taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED);
-        
-        // Create next task in the pipeline (VALIDATE)
-        createNextTask(task.getBuild(), TaskType.VALIDATE);
+        try {
+            // Get task payload as Map<String, Object>
+            Map<String, Object> payload = task.getPayload();
+            if (payload == null) {
+                payload = new HashMap<>();
+            }
+            
+            logger.debug("Calling CodeFixAgent with payload containing keys: {}", payload.keySet());
+            
+            // Call the actual CodeFixAgent
+            TaskResult result = codeFixAgent.handle(task, payload);
+            
+            logger.info("CodeFixAgent result: status={}, message={}", 
+                result.getStatus(), result.getMessage());
+            
+            if (result.getStatus() == TaskStatus.COMPLETED) {
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
+                // Create next task in the pipeline (VALIDATE)
+                createNextTask(task.getBuild(), TaskType.VALIDATE, result.getMetadata());
+            } else {
+                taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error in CodeFixAgent for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "CodeFixAgent failed: " + e.getMessage());
+        }
     }
     
     /**
-     * Placeholder for VALIDATE task handling.
+     * Handles VALIDATE task by calling the ValidatorAgent.
      */
     private void handleValidateTask(Task task) {
         logger.info("Processing VALIDATE task: id={}", task.getId());
         
-        // Placeholder: Mark as completed for now
-        taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED);
-        
-        // Create next task in the pipeline (CREATE_PR)
-        createNextTask(task.getBuild(), TaskType.CREATE_PR);
+        try {
+            // Convert task payload to ValidatePayload
+            Map<String, Object> payloadMap = task.getPayload();
+            if (payloadMap == null) {
+                payloadMap = new HashMap<>();
+            }
+            
+            ValidatePayload payload = objectMapper.convertValue(payloadMap, ValidatePayload.class);
+            
+            logger.debug("Calling ValidatorAgent for build validation");
+            
+            // Call the actual ValidatorAgent
+            TaskResult result = validatorAgent.handle(task, payload);
+            
+            logger.info("ValidatorAgent result: status={}, message={}", 
+                result.getStatus(), result.getMessage());
+            
+            if (result.getStatus() == TaskStatus.COMPLETED) {
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
+                // Create next task in the pipeline (CREATE_PR)
+                createNextTask(task.getBuild(), TaskType.CREATE_PR, result.getMetadata());
+            } else {
+                taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error in ValidatorAgent for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "ValidatorAgent failed: " + e.getMessage());
+        }
     }
     
     /**
-     * Placeholder for CREATE_PR task handling.
+     * Handles CREATE_PR task by calling the PrAgent.
      */
     private void handleCreatePrTask(Task task) {
         logger.info("Processing CREATE_PR task: id={}", task.getId());
         
-        // Placeholder: Mark as completed for now
-        taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED);
-        
-        // Create final task in the pipeline (NOTIFY)
-        createNextTask(task.getBuild(), TaskType.NOTIFY);
+        try {
+            // Convert task payload to PrPayload
+            Map<String, Object> payloadMap = task.getPayload();
+            if (payloadMap == null) {
+                payloadMap = new HashMap<>();
+            }
+            
+            PrPayload payload = objectMapper.convertValue(payloadMap, PrPayload.class);
+            
+            logger.debug("Calling PrAgent for GitHub PR creation");
+            
+            // Call the actual PrAgent
+            TaskResult result = prAgent.handle(task, payload);
+            
+            logger.info("PrAgent result: status={}, message={}", 
+                result.getStatus(), result.getMessage());
+            
+            if (result.getStatus() == TaskStatus.COMPLETED) {
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
+                // Create final task in the pipeline (NOTIFY)
+                createNextTask(task.getBuild(), TaskType.NOTIFY, result.getMetadata());
+            } else {
+                taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error in PrAgent for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "PrAgent failed: " + e.getMessage());
+        }
     }
     
     /**
@@ -291,12 +450,20 @@ public class Orchestrator {
      *
      * @param build The build being processed
      * @param taskType The type of task to create
+     * @param metadata Optional metadata from previous task
      */
-    private void createNextTask(Build build, TaskType taskType) {
+    private void createNextTask(Build build, TaskType taskType, Map<String, Object> metadata) {
         Task nextTask = new Task(build, taskType);
+        
+        // Add metadata from previous task if available
+        if (metadata != null && !metadata.isEmpty()) {
+            nextTask.setPayload(metadata);
+        }
+        
         taskQueue.enqueue(nextTask);
         
-        logger.debug("Created next task: type={}, buildId={}", taskType, build.getId());
+        logger.debug("Created next task: type={}, buildId={}, with metadata keys={}", 
+            taskType, build.getId(), metadata != null ? metadata.keySet() : "none");
     }
     
     /**

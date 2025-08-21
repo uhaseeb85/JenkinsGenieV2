@@ -148,7 +148,13 @@ public class WebhookController {
                 build.getId(), build.getJob(), build.getBuildNumber());
             
             // Create initial PLAN task
-            Task planTask = new Task(build, TaskType.PLAN, createTaskPayload(payload));
+            Map<String, Object> taskPayload = createTaskPayload(payload);
+            logger.debug("Task payload created with keys: {} and buildLogs length: {}", 
+                taskPayload.keySet(), 
+                taskPayload.get("buildLogs") != null ? 
+                    taskPayload.get("buildLogs").toString().length() : 0);
+            
+            Task planTask = new Task(build, TaskType.PLAN, taskPayload);
             taskQueue.enqueue(planTask);
             
             logger.info("Enqueued PLAN task for build: buildId={}, taskId={}", 
