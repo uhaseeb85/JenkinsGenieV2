@@ -476,6 +476,19 @@ public class Orchestrator {
                     preservedPayload.put(key, currentPayload.get(key));
                 }
             }
+            
+            // Map field names for PrPayload compatibility
+            if (currentPayload.containsKey("fixBranch")) {
+                preservedPayload.put("branchName", currentPayload.get("fixBranch"));
+            } else if (currentPayload.containsKey("branch")) {
+                preservedPayload.put("branchName", currentPayload.get("branch"));
+            }
+            
+            // Set default base branch if not present
+            if (!preservedPayload.containsKey("baseBranch")) {
+                preservedPayload.put("baseBranch", "main");
+            }
+            
             logger.debug("Preserved essential payload keys: {}", preservedPayload.keySet());
         }
         

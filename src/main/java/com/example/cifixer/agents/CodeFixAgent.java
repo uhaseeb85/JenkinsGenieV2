@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -100,6 +101,7 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
             int patchesApplied = 0;
             int filesProcessed = 0;
             int filesSkipped = 0;
+            List<String> patchedFiles = new ArrayList<>();
             
             for (CandidateFile candidateFile : candidateFiles) {
                 try {
@@ -111,6 +113,7 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
                     if (success) {
                         patchesGenerated++;
                         patchesApplied++;
+                        patchedFiles.add(candidateFile.getFilePath());
                         logger.info("✅ File processed successfully: {}", candidateFile.getFilePath());
                     } else {
                         patchesGenerated++;
@@ -152,6 +155,7 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("patchesGenerated", patchesGenerated);
             metadata.put("patchesApplied", patchesApplied);
+            metadata.put("patchedFiles", patchedFiles);
             metadata.put("commitMessage", commitMessage);
             
             return TaskResult.success("Code fixes generated and applied successfully", metadata);

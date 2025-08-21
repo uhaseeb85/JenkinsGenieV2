@@ -49,6 +49,9 @@ public class PrAgent implements Agent<PrPayload> {
     private ValidationRepository validationRepository;
     
     @Autowired
+    private BuildRepository buildRepository;
+    
+    @Autowired
     private ObjectMapper objectMapper;
     
     @Value("${github.token}")
@@ -56,17 +59,40 @@ public class PrAgent implements Agent<PrPayload> {
     
     @Override
     public TaskResult handle(Task task, PrPayload payload) {
-        logger.info("PrAgent: Starting PR creation for build {}", task.getBuild().getId());
+        logger.info("PrAgent: Starting PR creation for task {}", task.getId());
+        
+        // Null check for task.getBuild()
+        Build build = task.getBuild();
+        if (build == null) {
+            logger.error("PrAgent: Build is null for task {}", task.getId());
+            return TaskResult.failure("Build is null for task");
+        }
+        
+        logger.info("PrAgent: Starting PR creation for build {}", build.getId());
+        
+        // Null check for payload fields
+        if (payload == null) {
+            logger.error("PrAgent: Payload is null for build {}", build.getId());
+            return TaskResult.failure("Payload is null");
+        }
+        
         logger.debug("PrAgent: Payload - repo: {}, branch: {}, baseBranch: {}, patchedFiles: {}", 
-                    payload.getRepoUrl(), payload.getBranchName(), payload.getBaseBranch(), payload.getPatchedFiles().size());
+                    payload.getRepoUrl(), payload.getBranchName(), payload.getBaseBranch(), 
+                    payload.getPatchedFiles() != null ? payload.getPatchedFiles().size() : "null");
         
         try {
-            Build build = task.getBuild();
             
             // Check if PR already exists
             if (pullRequestRepository.existsByBuildId(build.getId())) {
                 logger.warn("PrAgent: PR already exists for build {}", build.getId());
                 return TaskResult.success("Pull request already exists for this build");
+            }
+
+            // Load build from database to avoid Hibernate LazyInitializationException
+            Build loadedBuild = buildRepository.findById(build.getId()).orElse(null);
+            if (loadedBuild == null) {
+                logger.error("PrAgent: Could not load build with ID: {}", build.getId());
+                return TaskResult.failure("Build not found in database");
             }
             
             // Parse repository information
@@ -76,25 +102,25 @@ public class PrAgent implements Agent<PrPayload> {
             
             // Push branch to remote
             logger.info("PrAgent: Pushing branch {} to remote", payload.getBranchName());
-            pushBranchToRemote(payload, repoInfo, build);
+            pushBranchToRemote(payload, repoInfo, loadedBuild);
             logger.info("PrAgent: ✅ Branch push completed successfully");
             
             // Gather additional context for PR description
             String planSummary = payload.getPlanSummary();
             List<String> patchedFiles = payload.getPatchedFiles();
-            String validationResults = gatherValidationResults(build.getId());
+            String validationResults = gatherValidationResults(loadedBuild.getId());
             logger.debug("PrAgent: Gathered context - planSummary length: {}, patchedFiles: {}", 
                         planSummary != null ? planSummary.length() : 0, patchedFiles.size());
             
             // Create PR request
-            String title = prTemplate.generateTitle(build);
-            String description = prTemplate.generateDescription(build, planSummary, patchedFiles, validationResults);
+            String title = prTemplate.generateTitle(loadedBuild);
+            String description = prTemplate.generateDescription(loadedBuild, planSummary, patchedFiles, validationResults);
             
             GitHubCreatePullRequestRequest prRequest = new GitHubCreatePullRequestRequest(
                     title, description, payload.getBranchName(), payload.getBaseBranch()
             );
             
-            logger.info("PrAgent: Creating PR for build {} with title: {}", build.getId(), title);
+            logger.info("PrAgent: Creating PR for build {} with title: {}", loadedBuild.getId(), title);
             logger.info("PrAgent: PR details - repository: {}/{}, branch: {}, base: {}",
                     repoInfo.getOwner(), repoInfo.getName(), payload.getBranchName(), payload.getBaseBranch());
             logger.debug("PrAgent: PR description: {}", description);
@@ -121,14 +147,14 @@ public class PrAgent implements Agent<PrPayload> {
             
             // Save PR information
             logger.info("PrAgent: Saving PR information to database");
-            PullRequest pullRequest = new PullRequest(build, payload.getBranchName());
+            PullRequest pullRequest = new PullRequest(loadedBuild, payload.getBranchName());
             pullRequest.setPrNumber(prResponse.getNumber());
             pullRequest.setPrUrl(prResponse.getHtmlUrl());
             pullRequest.setStatus(PullRequestStatus.CREATED);
             pullRequestRepository.save(pullRequest);
             
             logger.info("PrAgent: ✅ Successfully created PR #{} for build {}: {}", 
-                    prResponse.getNumber(), build.getId(), prResponse.getHtmlUrl());
+                    prResponse.getNumber(), loadedBuild.getId(), prResponse.getHtmlUrl());
             
             // Prepare result metadata
             Map<String, Object> metadata = new HashMap<>();
@@ -159,7 +185,7 @@ public class PrAgent implements Agent<PrPayload> {
      * Pushes the fix branch to the remote repository.
      */
     private void pushBranchToRemote(PrPayload payload, RepositoryInfo repoInfo, Build build) throws GitAPIException, java.io.IOException {
-        String workingDir = "/work/" + build.getId();
+        String workingDir = "/tmp/cifixer/build-" + build.getId();
         File gitDir = new File(workingDir);
         
         logger.debug("PrAgent: Checking working directory: {}", workingDir);
