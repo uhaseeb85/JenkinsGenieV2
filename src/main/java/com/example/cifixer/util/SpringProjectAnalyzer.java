@@ -378,4 +378,158 @@ public class SpringProjectAnalyzer {
                       .filter(s -> !s.isEmpty())
                       .collect(Collectors.toList());
     }
+    
+    /**
+     * Generates comprehensive project structure information for LLM context.
+     * 
+     * @param workingDir the root directory of the Spring Boot project
+     * @return String containing detailed project structure
+     */
+    public String generateProjectStructure(String workingDir) {
+        logger.info("Generating project structure for LLM context at: {}", workingDir);
+        
+        StringBuilder structure = new StringBuilder();
+        structure.append("=== PROJECT STRUCTURE ===\n");
+        
+        // 1. Build configuration files
+        structure.append("\n📋 Build Configuration:\n");
+        if (new File(workingDir, "pom.xml").exists()) {
+            structure.append("- pom.xml (Maven project)\n");
+        }
+        if (new File(workingDir, "build.gradle").exists() || new File(workingDir, "build.gradle.kts").exists()) {
+            structure.append("- build.gradle (Gradle project)\n");
+        }
+        
+        // 2. Application properties and configuration
+        structure.append("\n⚙️ Configuration Files:\n");
+        scanConfigurationFiles(workingDir, structure);
+        
+        // 3. Java package structure with classes
+        structure.append("\n📦 Java Package Structure:\n");
+        scanJavaPackages(workingDir, structure);
+        
+        // 4. Test structure
+        structure.append("\n🧪 Test Structure:\n");
+        scanTestPackages(workingDir, structure);
+        
+        // 5. Resources
+        structure.append("\n📁 Resources:\n");
+        scanResourceFiles(workingDir, structure);
+        
+        structure.append("\n=== END PROJECT STRUCTURE ===\n");
+        
+        logger.debug("Generated project structure with {} characters", structure.length());
+        return structure.toString();
+    }
+    
+    private void scanConfigurationFiles(String workingDir, StringBuilder structure) {
+        String[] configFiles = {
+            "src/main/resources/application.yml",
+            "src/main/resources/application.yaml", 
+            "src/main/resources/application.properties",
+            "src/main/resources/application-dev.properties",
+            "src/main/resources/application-prod.properties",
+            "src/main/resources/application-test.properties"
+        };
+        
+        for (String configFile : configFiles) {
+            if (new File(workingDir, configFile).exists()) {
+                structure.append("  - ").append(configFile).append("\n");
+            }
+        }
+    }
+    
+    private void scanJavaPackages(String workingDir, StringBuilder structure) {
+        Path srcPath = Paths.get(workingDir, "src", "main", "java");
+        if (!Files.exists(srcPath)) {
+            structure.append("  - No src/main/java directory found\n");
+            return;
+        }
+        
+        try (Stream<Path> paths = Files.walk(srcPath)) {
+            Map<String, List<String>> packageClasses = paths
+                .filter(Files::isRegularFile)
+                .filter(p -> p.toString().endsWith(".java"))
+                .collect(Collectors.groupingBy(
+                    p -> extractPackageName(p, srcPath),
+                    Collectors.mapping(p -> extractClassName(p), Collectors.toList())
+                ));
+            
+            packageClasses.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    structure.append("  📦 ").append(entry.getKey()).append("/\n");
+                    entry.getValue().stream()
+                        .sorted()
+                        .forEach(className -> structure.append("    - ").append(className).append(".java\n"));
+                });
+                
+        } catch (IOException e) {
+            logger.debug("Error scanning Java packages: {}", e.getMessage());
+            structure.append("  - Error scanning Java packages\n");
+        }
+    }
+    
+    private void scanTestPackages(String workingDir, StringBuilder structure) {
+        Path testPath = Paths.get(workingDir, "src", "test", "java");
+        if (!Files.exists(testPath)) {
+            structure.append("  - No src/test/java directory found\n");
+            return;
+        }
+        
+        try (Stream<Path> paths = Files.walk(testPath)) {
+            Map<String, List<String>> packageClasses = paths
+                .filter(Files::isRegularFile)
+                .filter(p -> p.toString().endsWith(".java"))
+                .collect(Collectors.groupingBy(
+                    p -> extractPackageName(p, testPath),
+                    Collectors.mapping(p -> extractClassName(p), Collectors.toList())
+                ));
+            
+            packageClasses.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    structure.append("  📦 ").append(entry.getKey()).append("/\n");
+                    entry.getValue().stream()
+                        .sorted()
+                        .forEach(className -> structure.append("    - ").append(className).append(".java (test)\n"));
+                });
+                
+        } catch (IOException e) {
+            logger.debug("Error scanning test packages: {}", e.getMessage());
+            structure.append("  - Error scanning test packages\n");
+        }
+    }
+    
+    private void scanResourceFiles(String workingDir, StringBuilder structure) {
+        Path resourcePath = Paths.get(workingDir, "src", "main", "resources");
+        if (!Files.exists(resourcePath)) {
+            structure.append("  - No src/main/resources directory found\n");
+            return;
+        }
+        
+        try (Stream<Path> paths = Files.walk(resourcePath)) {
+            paths.filter(Files::isRegularFile)
+                .filter(p -> !p.getFileName().toString().startsWith("."))
+                .sorted()
+                .forEach(p -> {
+                    String relativePath = resourcePath.relativize(p).toString().replace("\\", "/");
+                    structure.append("  - ").append(relativePath).append("\n");
+                });
+                
+        } catch (IOException e) {
+            logger.debug("Error scanning resource files: {}", e.getMessage());
+            structure.append("  - Error scanning resource files\n");
+        }
+    }
+    
+    private String extractPackageName(Path filePath, Path srcPath) {
+        Path relativePath = srcPath.relativize(filePath.getParent());
+        return relativePath.toString().replace("\\", ".").replace("/", ".");
+    }
+    
+    private String extractClassName(Path filePath) {
+        String fileName = filePath.getFileName().toString();
+        return fileName.substring(0, fileName.lastIndexOf(".java"));
+    }
 }

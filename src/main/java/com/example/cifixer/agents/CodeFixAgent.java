@@ -226,9 +226,9 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
                 // Build enhanced context for retry attempts
                 String enhancedErrorContext = buildEnhancedErrorContext(errorContext, candidateFile.getReason(), attempt);
                 
-                // Generate appropriate prompt based on file type
+                // Generate appropriate prompt based on file type with project structure
                 String prompt = buildPrompt(patchPayload.getProjectName(), filePath, fileContent, 
-                                          enhancedErrorContext, springContext);
+                                          enhancedErrorContext, springContext, patchPayload.getWorkingDirectory());
                 
                 // Call LLM to generate patch
                 String patch = llmClient.generatePatch(prompt, filePath);
@@ -263,11 +263,14 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
      * Builds appropriate prompt based on file type and Spring context.
      */
     private String buildPrompt(String projectName, String filePath, String fileContent, 
-                             String errorContext, SpringProjectContext springContext) {
+                             String errorContext, SpringProjectContext springContext, String workingDirectory) {
+        
+        // Generate comprehensive project structure for LLM context
+        String projectStructure = springProjectAnalyzer.generateProjectStructure(workingDirectory);
         
         if (filePath.endsWith(".java")) {
             return SpringPromptTemplate.buildSpringFixPrompt(projectName, filePath, fileContent, 
-                                                           errorContext, springContext);
+                                                           errorContext, springContext, projectStructure);
         } else if (filePath.equals("pom.xml")) {
             return SpringPromptTemplate.buildMavenPomPrompt(projectName, fileContent, 
                                                           errorContext, springContext);
@@ -277,7 +280,7 @@ public class CodeFixAgent implements Agent<Map<String, Object>> {
         } else {
             // Generic Spring-aware prompt for other files
             return SpringPromptTemplate.buildSpringFixPrompt(projectName, filePath, fileContent, 
-                                                           errorContext, springContext);
+                                                           errorContext, springContext, projectStructure);
         }
     }
     
