@@ -58,6 +58,7 @@ services:
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_API_MODEL: ${LLM_API_MODEL:-anthropic/claude-3.5-sonnet}
       LLM_API_PROVIDER: ${LLM_API_PROVIDER:-openrouter}
+      LLM_API_MAX_TOKENS: ${LLM_API_MAX_TOKENS:-128000}
       
       # Email configuration
       SPRING_MAIL_HOST: mailhog
@@ -75,9 +76,11 @@ services:
       # Application configuration
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
       LOGGING_LEVEL_COM_EXAMPLE_CIFIXER: ${LOG_LEVEL:-INFO}
+      LOGGING_LEVEL_COM_EXAMPLE_CIFIXER_LLM_LLMCLIENT: DEBUG
       
       # Working directory configuration
       CIFIXER_WORK_DIR: /app/work
+      CLEANUP_WORKING_DIRECTORY_BASE: /app/work
       CIFIXER_CLEANUP_ENABLED: ${CLEANUP_ENABLED:-true}
       CIFIXER_CLEANUP_RETENTION_HOURS: ${CLEANUP_RETENTION_HOURS:-24}
       

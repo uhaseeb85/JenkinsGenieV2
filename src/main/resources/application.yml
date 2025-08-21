@@ -74,7 +74,7 @@ external:
         connect: ${LLM_API_CONNECT_TIMEOUT:10000}
         read: ${LLM_API_READ_TIMEOUT:120000}
       model: ${LLM_API_MODEL:anthropic/claude-3.5-sonnet}
-      max-tokens: ${LLM_API_MAX_TOKENS:4000}
+      max-tokens: ${LLM_API_MAX_TOKENS:128000}
 
 # LLM API configuration
 llm:
@@ -83,7 +83,7 @@ llm:
     key: ${JENKINS_GENIE_LLM_API_KEY:${LLM_API_KEY:}}
     model: ${JENKINS_GENIE_LLM_MODEL:${LLM_API_MODEL:anthropic/claude-3.5-sonnet}}
     provider: ${JENKINS_GENIE_LLM_PROVIDER:${LLM_API_PROVIDER:openrouter}}
-    max-tokens: ${LLM_API_MAX_TOKENS:4000}
+    max-tokens: ${LLM_API_MAX_TOKENS:128000}
     temperature: ${LLM_API_TEMPERATURE:0.1}
     timeout-seconds: ${LLM_API_TIMEOUT_SECONDS:60}
     max-retries: ${LLM_API_MAX_RETRIES:3}
@@ -110,12 +110,13 @@ logging:
   level:
     com.example.cifixer: DEBUG
     com.example.cifixer.web.WebhookController: DEBUG
+    com.example.cifixer.llm.LlmClient: DEBUG
     org.springframework.web: INFO
     org.hibernate.SQL: WARN
     com.zaxxer.hikari: INFO
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] %logger{36} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] [%X{llmRequestId:-}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-}] [%X{buildId:-}] [%X{taskId:-}] [%X{llmRequestId:-}] %logger{36} - %msg%n"
   file:
     name: ${LOG_FILE_PATH:logs/cifixer.log}
     max-size: ${LOG_FILE_MAX_SIZE:100MB}

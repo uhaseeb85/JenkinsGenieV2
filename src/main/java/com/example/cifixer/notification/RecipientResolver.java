@@ -39,6 +39,9 @@ public class RecipientResolver {
     @Value("${notification.include-commit-authors:true}")
     private boolean includeCommitAuthors;
     
+    @Value("${cleanup.working.directory.base:/work}")
+    private String workingDirectoryBase;
+    
     /**
      * Resolves recipients for success notifications.
      */
@@ -100,7 +103,7 @@ public class RecipientResolver {
         List<String> authors = new ArrayList<>();
         
         try {
-            String workingDir = "/work/" + build.getId();
+            String workingDir = workingDirectoryBase + "/" + build.getId();
             File gitDir = new File(workingDir);
             
             if (!gitDir.exists()) {

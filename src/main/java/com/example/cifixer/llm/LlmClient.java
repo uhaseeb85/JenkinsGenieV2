@@ -130,7 +130,13 @@ public class LlmClient {
      * Makes HTTP call to external OpenAI-compatible API endpoint.
      */
     private LlmResponse callLlm(String prompt) throws LlmException {
+        long startTime = System.currentTimeMillis();
+        String requestId = generateRequestId();
+        
+        // Add request ID to MDC for log correlation
         try {
+            org.slf4j.MDC.put("llmRequestId", requestId);
+            
             // Validate API key
             if (apiKey == null || apiKey.trim().isEmpty()) {
                 throw new LlmException("API key not configured", "MISSING_API_KEY", false);
@@ -148,16 +154,18 @@ public class LlmClient {
                     .url(endpoint)
                     .post(body)
                     .addHeader("Content-Type", "application/json")
-                    .addHeader("User-Agent", "Multi-Agent-CI-Fixer/1.0");
+                    .addHeader("User-Agent", "Multi-Agent-CI-Fixer/1.0")
+                    .addHeader("X-Request-ID", requestId);
             
             // Add provider-specific headers
             addProviderHeaders(requestBuilder);
             
             Request httpRequest = requestBuilder.build();
             
-            logger.info("Calling {} API endpoint: {} with model: {}", apiProvider, endpoint, defaultModel);
-            logger.info("LLM Request: {}", requestJson);
+            // Log detailed request information
+            logDetailedRequest(httpRequest, requestJson);
             
+            LlmResponse result = null;
             try (Response response = httpClient.newCall(httpRequest).execute()) {
                 if (!response.isSuccessful()) {
                     String errorBody = response.body() != null ? response.body().string() : "No error body";
@@ -170,10 +178,26 @@ public class LlmClient {
                 }
                 
                 String responseJson = response.body().string();
-                logger.info("LLM Response received, length: {}", responseJson.length());
-                logger.info("LLM Response: {}", responseJson);
                 
-                return parseApiResponse(responseJson);
+                // Log detailed response information
+                logDetailedResponse(response, responseJson);
+                
+                result = parseApiResponse(responseJson);
+                return result;
+            } finally {
+                long endTime = System.currentTimeMillis();
+                long duration = endTime - startTime;
+                
+                // Log performance metrics
+                logger.info("LLM API call completed - RequestID: {}, Duration: {} ms, Model: {}, Provider: {}, Status: {}",
+                    requestId, duration, defaultModel, apiProvider,
+                    (result != null && !result.hasError()) ? "SUCCESS" : "FAILED");
+                
+                // Record metrics for monitoring
+                recordApiCallMetrics(duration, result);
+                
+                // Clean up MDC to prevent memory leaks
+                org.slf4j.MDC.remove("llmRequestId");
             }
             
         } catch (IOException e) {
@@ -184,9 +208,15 @@ public class LlmClient {
     }
     
     /**
-     * Builds API request JSON based on provider.
+     * Builds API request JSON based on provider and model.
      */
     private String buildApiRequest(String prompt) throws IOException {
+        // Check if using Claude model (regardless of provider)
+        if (defaultModel.toLowerCase().contains("claude")) {
+            return buildAnthropicRequest(prompt);
+        }
+        
+        // Otherwise use provider-specific format
         switch (apiProvider.toLowerCase()) {
             case "anthropic":
                 return buildAnthropicRequest(prompt);
@@ -226,64 +256,108 @@ public class LlmClient {
      */
     private String buildAnthropicRequest(String prompt) throws IOException {
         AnthropicRequest request = new AnthropicRequest();
-        request.setModel(defaultModel);
+        
+        // If using OpenRouter, strip the "anthropic/" prefix from model name if present
+        if ("openrouter".equalsIgnoreCase(apiProvider) && defaultModel.startsWith("anthropic/")) {
+            request.setModel(defaultModel.substring("anthropic/".length()));
+        } else {
+            request.setModel(defaultModel);
+        }
+        
+        // Set max tokens for response generation
         request.setMaxTokens(maxTokens);
+        
+        // Set system prompt
         request.setSystem("You are a senior Java Spring Boot developer. Generate minimal unified diffs to fix Spring Boot compilation and runtime errors. Always respond with a valid unified diff format.");
         
+        // Create user message
         AnthropicMessage message = new AnthropicMessage();
         message.setRole("user");
         message.setContent(prompt);
         
         request.setMessages(new AnthropicMessage[]{message});
         
+        // Log the model being used
+        logger.debug("Using Claude model: {}", request.getModel());
+        
         return objectMapper.writeValueAsString(request);
     }
     
     /**
-     * Gets the appropriate API endpoint based on provider.
+     * Gets the appropriate API endpoint based on provider and model.
      */
     private String getApiEndpoint() {
-        switch (apiProvider.toLowerCase()) {
-            case "anthropic":
-                return apiBaseUrl + ANTHROPIC_MESSAGES_ENDPOINT;
-            case "openai":
-            case "openrouter":
-            case "azure":
-            default:
-                return apiBaseUrl + OPENAI_CHAT_COMPLETIONS_ENDPOINT;
+        // For OpenRouter, always use the OpenAI-compatible endpoint regardless of model
+        if ("openrouter".equalsIgnoreCase(apiProvider)) {
+            return apiBaseUrl + OPENAI_CHAT_COMPLETIONS_ENDPOINT;
         }
+        
+        // For direct Anthropic API access
+        if ("anthropic".equalsIgnoreCase(apiProvider)) {
+            return apiBaseUrl + ANTHROPIC_MESSAGES_ENDPOINT;
+        }
+        
+        // For other providers (OpenAI, Azure, etc.)
+        return apiBaseUrl + OPENAI_CHAT_COMPLETIONS_ENDPOINT;
     }
     
     /**
      * Adds provider-specific headers to the request.
      */
     private void addProviderHeaders(Request.Builder requestBuilder) {
-        switch (apiProvider.toLowerCase()) {
-            case "anthropic":
-                requestBuilder.addHeader("x-api-key", apiKey);
+        // For OpenRouter, add OpenRouter-specific headers
+        if ("openrouter".equalsIgnoreCase(apiProvider)) {
+            requestBuilder.addHeader("Authorization", "Bearer " + apiKey);
+            requestBuilder.addHeader("HTTP-Referer", "https://github.com/your-org/ci-fixer");
+            requestBuilder.addHeader("X-Title", "Multi-Agent CI Fixer");
+            
+            // Add Claude-specific headers if using a Claude model
+            if (defaultModel.toLowerCase().contains("claude")) {
                 requestBuilder.addHeader("anthropic-version", "2023-06-01");
-                break;
-            case "openai":
-                requestBuilder.addHeader("Authorization", "Bearer " + apiKey);
-                break;
-            case "openrouter":
-                requestBuilder.addHeader("Authorization", "Bearer " + apiKey);
-                requestBuilder.addHeader("HTTP-Referer", "https://github.com/your-org/ci-fixer");
-                requestBuilder.addHeader("X-Title", "Multi-Agent CI Fixer");
-                break;
-            case "azure":
-                requestBuilder.addHeader("api-key", apiKey);
-                break;
-            default:
-                requestBuilder.addHeader("Authorization", "Bearer " + apiKey);
-                break;
+            }
+            return;
         }
+        
+        // For direct Anthropic API access
+        if ("anthropic".equalsIgnoreCase(apiProvider)) {
+            requestBuilder.addHeader("x-api-key", apiKey);
+            requestBuilder.addHeader("anthropic-version", "2023-06-01");
+            return;
+        }
+        
+        // For OpenAI
+        if ("openai".equalsIgnoreCase(apiProvider)) {
+            requestBuilder.addHeader("Authorization", "Bearer " + apiKey);
+            return;
+        }
+        
+        // For Azure OpenAI
+        if ("azure".equalsIgnoreCase(apiProvider)) {
+            requestBuilder.addHeader("api-key", apiKey);
+            return;
+        }
+        
+        // Default case
+        requestBuilder.addHeader("Authorization", "Bearer " + apiKey);
     }
     
     /**
-     * Parses API response based on provider.
+     * Parses API response based on provider and model.
      */
     private LlmResponse parseApiResponse(String responseJson) throws IOException {
+        // Check if using Claude model (regardless of provider)
+        if (defaultModel.toLowerCase().contains("claude")) {
+            try {
+                return parseAnthropicResponse(responseJson);
+            } catch (Exception e) {
+                // If parsing as Anthropic response fails, try OpenAI format as fallback
+                // This handles cases where OpenRouter might wrap Claude responses in OpenAI format
+                logger.warn("Failed to parse Claude response in Anthropic format, trying OpenAI format: {}", e.getMessage());
+                return parseOpenAiResponse(responseJson);
+            }
+        }
+        
+        // Otherwise use provider-specific format
         switch (apiProvider.toLowerCase()) {
             case "anthropic":
                 return parseAnthropicResponse(responseJson);
@@ -418,18 +492,21 @@ public class LlmClient {
      */
     private String truncatePrompt(String prompt) {
         // Rough estimation: 1 token ≈ 4 characters
-        int maxPromptChars = (maxTokens - 500) * 4; // Reserve 500 tokens for response
+        // With 128,000 max tokens, reserve 4,000 tokens for response
+        int reservedTokens = Math.min(4000, maxTokens / 32);
+        int maxPromptChars = (maxTokens - reservedTokens) * 4;
         
         if (prompt.length() <= maxPromptChars) {
             return prompt;
         }
         
-        logger.warn("Truncating prompt from {} to {} characters", prompt.length(), maxPromptChars);
+        logger.warn("Truncating prompt from {} to {} characters (max tokens: {}, reserved: {})",
+                   prompt.length(), maxPromptChars, maxTokens, reservedTokens);
         
         // Try to truncate at a reasonable boundary
         String truncated = prompt.substring(0, maxPromptChars);
         int lastNewline = truncated.lastIndexOf('\n');
-        if (lastNewline > maxPromptChars * 0.8) {
+        if (lastNewline > maxPromptChars * 0.9) {
             truncated = truncated.substring(0, lastNewline);
         }
         
@@ -470,5 +547,118 @@ public class LlmClient {
             logger.warn("API health check failed: {}", e.getMessage());
             return false;
         }
+    }
+    
+    /**
+     * Generates a unique request ID for tracking LLM API calls.
+     *
+     * @return A unique request ID string
+     */
+    private String generateRequestId() {
+        return "llm-" + System.currentTimeMillis() + "-" +
+               Math.abs(java.util.UUID.randomUUID().toString().hashCode() % 10000);
+    }
+    
+    /**
+     * Records metrics for LLM API calls for monitoring and analysis.
+     *
+     * @param duration The duration of the API call in milliseconds
+     * @param response The LLM response object
+     */
+    private void recordApiCallMetrics(long duration, LlmResponse response) {
+        try {
+            // Log token usage if available
+            if (response != null && response.getUsage() != null) {
+                LlmResponse.Usage usage = response.getUsage();
+                logger.info("LLM Token Usage - Prompt: {}, Completion: {}, Total: {}",
+                    usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+                
+                // Here you could add metrics to a monitoring system like Prometheus
+                // For example:
+                // metricsRegistry.counter("llm.api.tokens.prompt").increment(usage.getPromptTokens());
+                // metricsRegistry.counter("llm.api.tokens.completion").increment(usage.getCompletionTokens());
+                // metricsRegistry.counter("llm.api.tokens.total").increment(usage.getTotalTokens());
+            }
+            
+            // Record API call duration
+            // metricsRegistry.timer("llm.api.duration").record(duration, TimeUnit.MILLISECONDS);
+            
+            // Record success/failure
+            // metricsRegistry.counter("llm.api.calls", "status", response != null && !response.hasError() ? "success" : "failure").increment();
+        } catch (Exception e) {
+            // Don't let metrics recording failure affect the main flow
+            logger.warn("Failed to record LLM API metrics: {}", e.getMessage());
+        }
+    }
+    
+    /**
+     * Logs detailed information about the LLM API request.
+     *
+     * @param request The HTTP request
+     * @param requestJson The JSON payload
+     */
+    private void logDetailedRequest(Request request, String requestJson) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n==== LLM API REQUEST ====\n");
+        sb.append(String.format("URL: %s\n", request.url()));
+        sb.append(String.format("Method: %s\n", request.method()));
+        sb.append("Headers:\n");
+        
+        request.headers().toMultimap().forEach((name, values) -> {
+            // Mask sensitive headers like Authorization
+            if (name.equalsIgnoreCase("Authorization") || name.equalsIgnoreCase("x-api-key")) {
+                sb.append(String.format("  %s: %s\n", name, "********"));
+            } else {
+                sb.append(String.format("  %s: %s\n", name, String.join(", ", values)));
+            }
+        });
+        
+        sb.append("Body:\n");
+        try {
+            // Pretty print JSON if possible
+            ObjectMapper mapper = new ObjectMapper();
+            Object json = mapper.readValue(requestJson, Object.class);
+            sb.append(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(json));
+        } catch (Exception e) {
+            // Fallback to raw JSON if pretty printing fails
+            sb.append(requestJson);
+        }
+        sb.append("\n==========================\n");
+        
+        logger.info("Calling {} API endpoint: {} with model: {}", apiProvider, request.url(), defaultModel);
+        logger.info(sb.toString());
+    }
+    
+    /**
+     * Logs detailed information about the LLM API response.
+     *
+     * @param response The HTTP response
+     * @param responseJson The JSON response body
+     */
+    private void logDetailedResponse(Response response, String responseJson) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n==== LLM API RESPONSE ====\n");
+        sb.append(String.format("Status: %d %s\n", response.code(), response.message()));
+        sb.append("Headers:\n");
+        
+        response.headers().toMultimap().forEach((name, values) -> {
+            sb.append(String.format("  %s: %s\n", name, String.join(", ", values)));
+        });
+        
+        sb.append(String.format("Response Size: %d bytes\n", responseJson.length()));
+        sb.append("Body:\n");
+        try {
+            // Pretty print JSON if possible
+            ObjectMapper mapper = new ObjectMapper();
+            Object json = mapper.readValue(responseJson, Object.class);
+            sb.append(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(json));
+        } catch (Exception e) {
+            // Fallback to raw JSON if pretty printing fails
+            sb.append(responseJson);
+        }
+        sb.append("\n===========================\n");
+        
+        logger.info("LLM Response received, status: {}, length: {}", response.code(), responseJson.length());
+        logger.info(sb.toString());
     }
 }
