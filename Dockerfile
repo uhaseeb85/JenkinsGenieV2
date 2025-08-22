@@ -18,7 +18,7 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # Runtime stage
-FROM openjdk:11-jre-slim
+FROM openjdk:11-jdk-slim
 
 # Install git and maven for repository operations and validation
 RUN apt-get update && apt-get install -y git maven && rm -rf /var/lib/apt/lists/*
