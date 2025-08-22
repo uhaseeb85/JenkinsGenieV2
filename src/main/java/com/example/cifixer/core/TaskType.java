@@ -30,6 +30,16 @@ public enum TaskType {
     VALIDATE,
     
     /**
+     * Build validation after patch application (Maven clean compile)
+     */
+    VALIDATE_BUILD,
+    
+    /**
+     * Retry patch with failure context from previous build validation
+     */
+    RETRY_PATCH,
+    
+    /**
      * Create GitHub pull request with fixes
      */
     CREATE_PR,

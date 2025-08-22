@@ -54,6 +54,9 @@ public class Orchestrator {
     private PrAgent prAgent;
     
     @Autowired
+    private BuildValidationService buildValidationService;
+    
+    @Autowired
     private ObjectMapper objectMapper;
     
     @Value("${orchestrator.processing.enabled:true}")
@@ -157,6 +160,12 @@ public class Orchestrator {
                     break;
                 case PATCH:
                     handlePatchTask(task);
+                    break;
+                case VALIDATE_BUILD:
+                    handleValidateBuildTask(task);
+                    break;
+                case RETRY_PATCH:
+                    handleRetryPatchTask(task);
                     break;
                 case VALIDATE:
                     handleValidateTask(task);
@@ -320,10 +329,16 @@ public class Orchestrator {
             
             if (result.getStatus() == TaskStatus.COMPLETED) {
                 taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
-                // SKIP VALIDATION - Go directly to PR creation after patch is applied
-                logger.info("Skipping validation - proceeding directly to PR creation for build: {}", task.getBuild().getId());
+                
+                // NEW LOGIC: After patch is applied, validate the build before creating PR
+                logger.info("Patch applied successfully - proceeding to build validation for build: {}", task.getBuild().getId());
                 Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
-                createNextTask(task.getBuild(), TaskType.CREATE_PR, nextTaskPayload);
+                
+                // Add patch attempt tracking for potential retry
+                Integer currentAttempt = (Integer) nextTaskPayload.getOrDefault("patchAttempt", 1);
+                nextTaskPayload.put("patchAttempt", currentAttempt);
+                
+                createNextTask(task.getBuild(), TaskType.VALIDATE_BUILD, nextTaskPayload);
             } else {
                 taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
             }
@@ -371,6 +386,152 @@ public class Orchestrator {
             logger.error("Error in ValidatorAgent for task: {}", task.getId(), e);
             taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
                 "ValidatorAgent failed: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handles VALIDATE_BUILD task by running Maven build validation.
+     * If build fails and it's the first attempt, triggers a retry with RETRY_PATCH.
+     * If build succeeds or it's already a retry, proceeds to CREATE_PR or stops.
+     */
+    private void handleValidateBuildTask(Task task) {
+        logger.info("Processing VALIDATE_BUILD task: id={}", task.getId());
+        
+        try {
+            // Convert task payload
+            Map<String, Object> payloadMap = task.getPayload();
+            if (payloadMap == null) {
+                payloadMap = new HashMap<>();
+            }
+            
+            BuildValidationPayload payload = objectMapper.convertValue(payloadMap, BuildValidationPayload.class);
+            
+            // Validate working directory
+            String workingDirectory = payload.getWorkingDirectory();
+            if (workingDirectory == null || workingDirectory.isEmpty()) {
+                logger.error("No working directory specified for build validation");
+                taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                    "Missing working directory for build validation");
+                return;
+            }
+            
+            logger.info("Running Maven build validation in directory: {}", workingDirectory);
+            
+            // Run the build validation
+            BuildValidationResult result = buildValidationService.validateBuild(workingDirectory);
+            
+            Integer patchAttempt = (Integer) payloadMap.getOrDefault("patchAttempt", 1);
+            
+            if (result.isSuccess()) {
+                logger.info("Build validation PASSED - proceeding to PR creation for build: {}", task.getBuild().getId());
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, 
+                    "Build validation passed with exit code: " + result.getExitCode());
+                
+                // Build passed - proceed to CREATE_PR
+                Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, null);
+                createNextTask(task.getBuild(), TaskType.CREATE_PR, nextTaskPayload);
+                
+            } else if (patchAttempt == 1) {
+                logger.warn("Build validation FAILED on first attempt - triggering retry for build: {}", task.getBuild().getId());
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, 
+                    "Build validation failed (attempt 1) - will retry: exit code " + result.getExitCode());
+                
+                // Build failed on first attempt - trigger retry
+                Map<String, Object> retryPayload = preserveEssentialPayload(task, null);
+                retryPayload.put("patchAttempt", 2);
+                retryPayload.put("previousBuildError", result.getCompilationErrors());
+                retryPayload.put("previousExitCode", result.getExitCode());
+                
+                createNextTask(task.getBuild(), TaskType.RETRY_PATCH, retryPayload);
+                
+            } else {
+                logger.error("Build validation FAILED on retry attempt - no PR will be created for build: {}", task.getBuild().getId());
+                taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                    "Build validation failed on retry attempt (exit code: " + result.getExitCode() + ") - stopping workflow");
+                
+                // Update build status to failed
+                Build build = task.getBuild();
+                build.setStatus(BuildStatus.FAILED);
+                buildRepository.save(build);
+                
+                // Send failure notification
+                NotifyPayload notifyPayload = new NotifyPayload();
+                notifyPayload.setNotificationType(NotificationType.BUILD_VALIDATION_FAILED);
+                notifyPayload.setErrorMessage("Build validation failed after retry: " + result.getErrorMessage());
+                
+                @SuppressWarnings("unchecked")
+                Map<String, Object> notifyMap = objectMapper.convertValue(notifyPayload, Map.class);
+                createNextTask(task.getBuild(), TaskType.NOTIFY, notifyMap);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error during build validation for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "Build validation error: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handles RETRY_PATCH task by reverting previous patch and asking LLM for a new fix.
+     * This is called when the first patch attempt failed build validation.
+     */
+    private void handleRetryPatchTask(Task task) {
+        logger.info("Processing RETRY_PATCH task: id={}", task.getId());
+        
+        try {
+            // Get task payload
+            Map<String, Object> payloadMap = task.getPayload();
+            if (payloadMap == null) {
+                payloadMap = new HashMap<>();
+            }
+            
+            // Add retry context to the payload
+            String previousError = (String) payloadMap.get("previousBuildError");
+            Integer previousExitCode = (Integer) payloadMap.get("previousExitCode");
+            
+            // Create enhanced context for the LLM
+            StringBuilder retryContext = new StringBuilder();
+            retryContext.append("RETRY ATTEMPT: The previous fix failed Maven compilation. ");
+            retryContext.append("Exit code: ").append(previousExitCode).append(". ");
+            if (previousError != null) {
+                retryContext.append("Compilation errors: ").append(previousError);
+            }
+            retryContext.append(" Please provide an alternative fix that will compile successfully.");
+            
+            payloadMap.put("retryContext", retryContext.toString());
+            payloadMap.put("isRetryAttempt", true);
+            
+            logger.info("Initiating LLM retry with compilation error context for build: {}", task.getBuild().getId());
+            
+            // Call the CodeFixAgent again with retry context
+            TaskResult result = codeFixAgent.handle(task, payloadMap);
+            
+            logger.info("CodeFixAgent retry result: status={}, message={}", 
+                result.getStatus(), result.getMessage());
+            
+            if (result.getStatus() == TaskStatus.COMPLETED) {
+                taskQueue.updateStatus(task.getId(), TaskStatus.COMPLETED, result.getMessage());
+                
+                // After retry patch is applied, validate the build again
+                logger.info("Retry patch applied - proceeding to build validation for build: {}", task.getBuild().getId());
+                Map<String, Object> nextTaskPayload = preserveEssentialPayload(task, result.getMetadata());
+                nextTaskPayload.put("patchAttempt", 2); // Mark as second attempt
+                
+                createNextTask(task.getBuild(), TaskType.VALIDATE_BUILD, nextTaskPayload);
+            } else {
+                taskQueue.updateStatus(task.getId(), result.getStatus(), result.getMessage());
+                
+                // If retry patch also failed, stop the workflow
+                logger.error("Retry patch failed - stopping workflow for build: {}", task.getBuild().getId());
+                Build build = task.getBuild();
+                build.setStatus(BuildStatus.FAILED);
+                buildRepository.save(build);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error during retry patch for task: {}", task.getId(), e);
+            taskQueue.updateStatus(task.getId(), TaskStatus.FAILED, 
+                "Retry patch error: " + e.getMessage());
         }
     }
     

@@ -17,5 +17,10 @@ public enum NotificationType {
     /**
      * Notification sent when manual intervention is required
      */
-    MANUAL_INTERVENTION
+    MANUAL_INTERVENTION,
+    
+    /**
+     * Notification sent when build validation fails after retry
+     */
+    BUILD_VALIDATION_FAILED
 }
