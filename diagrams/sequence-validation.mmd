@@ -1,0 +1,17 @@
+sequenceDiagram
+  autonumber
+  participant Orc as Orchestration
+  participant Git as Git/PR Service
+  participant Val as Validation Service
+
+  Orc->>Git: Create temp branch from base
+  Git-->>Orc: Branch ref
+  Orc->>Git: Apply file modifications (patch)
+  Orc->>Val: Compile + run tests on temp branch
+  Val-->>Orc: Results (pass/fail, logs)
+  alt Success
+    Orc->>Git: Create PR to target branch (title, description, artifacts)
+  else Failure
+    Orc->>Git: Cleanup temp branch
+    Orc->>Orc: Retry or escalate per policy
+  end

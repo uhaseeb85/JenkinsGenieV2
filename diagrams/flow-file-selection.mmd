@@ -1,0 +1,12 @@
+flowchart TD
+  A[Start: BuildError + ProjectContext] --> B[Collect all source files]
+  B --> C[Compute Semantic/Dependency/Architectural/Historical per file]
+  C --> D[Normalize + Weight by language]
+  D --> E[Composite score]
+  E --> F{Score >= threshold?}
+  F -- No --> G[Discard]
+  F -- Yes --> H[Add to candidates]
+  H --> I[Sort by score desc]
+  I --> J[Select Top-N]
+  J --> K[Compute confidence + breakdown]
+  K --> L[Return ranked files]

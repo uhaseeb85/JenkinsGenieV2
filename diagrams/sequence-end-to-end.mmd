@@ -1,0 +1,30 @@
+sequenceDiagram
+  autonumber
+  participant CI as CI/CD
+  participant Orc as Orchestration Service
+  participant Err as Error Analysis Service
+  participant Sel as File Selection Service
+  participant LLMi as LLM Integration Service
+  participant LLM as Large Language Model
+  participant Val as Validation Service
+  participant Git as Git/PR Service
+  participant Notif as Notification Service
+
+  CI->>Orc: Build failure webhook payload
+  Orc->>Err: Analyze logs, classify error
+  Err-->>Orc: ErrorContext (type, stack, tool, candidates)
+  Orc->>Sel: Select relevant files (multi-dimensional scoring)
+  Sel-->>Orc: Ranked files + confidence
+  Orc->>LLMi: Build prompt + request fix
+  LLMi->>LLM: Context-aware prompt (files + error context)
+  LLM-->>LLMi: Proposed code modifications
+  Orc->>Val: Temp branch → apply fix → compile + run tests
+  Val-->>Orc: ValidationResult (pass/fail, diagnostics)
+  alt Pass
+    Orc->>Git: Create PR with description and artifacts
+    Git-->>Orc: PR URL / commit SHA
+    Orc->>Notif: Notify success with PR link
+  else Fail
+    Orc->>LLMi: Provide diagnostics for guided retry (optional)
+    Orc->>Notif: Notify failure with actionable diagnostics
+  end
