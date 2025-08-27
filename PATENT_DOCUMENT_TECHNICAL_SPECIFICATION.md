@@ -870,10 +870,10 @@ sequenceDiagram
 
 The system employs six specialized agents, each with distinct responsibilities:
 
-#### 1. Planning Agent
+#### 1. Planning Agent (PlannerAgent)
 ```java
 @Component
-public class PlanningAgent implements Agent<Map<String, Object>> {
+public class PlannerAgent implements Agent<Map<String, Object>> {
     
     @Override
     public TaskResult handle(Task task, Map<String, Object> payload) {
@@ -926,10 +926,10 @@ public class PlanningAgent implements Agent<Map<String, Object>> {
 }
 ```
 
-#### 2. Retrieval Agent (File Scoring Implementation)
+#### 2. Retrieval Agent (RetrieverAgent)
 ```java
 @Component
-public class RetrievalAgent implements Agent<Map<String, Object>> {
+public class RetrieverAgent implements Agent<Map<String, Object>> {
     
     // Core scoring weights for different programming languages
     private static final Map<String, LanguageWeights> LANGUAGE_WEIGHTS = Map.of(
@@ -1050,6 +1050,139 @@ public class RetrievalAgent implements Agent<Map<String, Object>> {
     }
 }
 ```
+
+    }
+}
+```
+
+#### 3. Code Fix Agent (CodeFixAgent)
+```java
+@Component
+public class CodeFixAgent implements Agent<Map<String, Object>> {
+    
+    @Override
+    public TaskResult handle(Task task, Map<String, Object> payload) {
+        Build build = task.getBuild();
+        
+        try {
+            // Get candidate files from retrieval agent
+            List<CandidateFile> candidateFiles = candidateFileRepository
+                .findByBuildIdOrderByRankScoreDesc(build.getId());
+            
+            // Analyze project context for Spring-specific prompting
+            SpringProjectContext context = springProjectAnalyzer.analyzeProject(
+                build.getWorkingDirectory()
+            );
+            
+            // Build LLM prompt with Spring-specific context
+            String prompt = springPromptTemplate.buildPrompt(
+                candidateFiles, context, extractErrorSummary(payload)
+            );
+            
+            // Generate fix using LLM
+            String llmResponse = llmClient.generateCodeFix(prompt);
+            
+            // Parse and apply patches
+            List<Patch> patches = parseLlmResponse(llmResponse, build);
+            applyPatchesToFiles(patches, build.getWorkingDirectory());
+            patches.forEach(patchRepository::save);
+            
+            return TaskResult.success("Generated " + patches.size() + " patches");
+            
+        } catch (Exception e) {
+            return TaskResult.failure("Fix generation failed: " + e.getMessage());
+        }
+    }
+}
+```
+
+#### 4. Validation Agent (ValidatorAgent)
+```java
+@Component
+public class ValidatorAgent implements Agent<ValidatePayload> {
+    
+    @Override
+    public TaskResult handle(Task task, ValidatePayload payload) {
+        Build build = task.getBuild();
+        
+        try {
+            // Determine build tool (Maven/Gradle) and perform validation
+            SpringProjectContext context = springProjectAnalyzer.analyzeProject(
+                build.getWorkingDirectory()
+            );
+            
+            // Compilation validation
+            ValidationResult compileResult = performCompilationValidation(
+                build.getWorkingDirectory(), context.getBuildTool()
+            );
+            
+            if (!compileResult.isSuccess()) {
+                return TaskResult.failure("Compilation failed: " + compileResult.getErrorMessage());
+            }
+            
+            // Optional test validation
+            if (payload.getRunTests()) {
+                ValidationResult testResult = performTestValidation(
+                    build.getWorkingDirectory(), context.getBuildTool()
+                );
+            }
+            
+            // Save validation results to database
+            Validation validation = new Validation(build, ValidationType.FULL_VALIDATION,
+                compileResult.getExitCode(), compileResult.getStdout(), compileResult.getStderr());
+            validationRepository.save(validation);
+            
+            return TaskResult.success("Validation completed successfully");
+                
+        } catch (Exception e) {
+            return TaskResult.failure("Validation error: " + e.getMessage());
+        }
+    }
+}
+```
+
+#### 5. Pull Request Agent (PrAgent)
+```java
+@Component
+public class PrAgent implements Agent<PrPayload> {
+    
+    @Override
+    public TaskResult handle(Task task, PrPayload payload) {
+        Build build = task.getBuild();
+        
+        try {
+            // Create fix branch with timestamp
+            String branchName = "fix/build-" + build.getId() + "-" + System.currentTimeMillis();
+            
+            // Get applied patches for PR description
+            List<Patch> patches = patchRepository.findByBuildIdAndAppliedTrue(build.getId());
+            
+            // Push branch to GitHub and create PR
+            pushBranchToGitHub(build, branchName);
+            
+            PrRequest prRequest = prTemplate.createPrRequest(build, branchName, patches);
+            GitHubPr createdPr = gitHubClient.createPullRequest(
+                extractRepoOwner(build.getRepoUrl()),
+                extractRepoName(build.getRepoUrl()),
+                prRequest
+            );
+            
+            // Save PR information to database
+            PullRequest pullRequest = new PullRequest(build, createdPr.getNumber(), 
+                createdPr.getHtmlUrl(), branchName);
+            pullRequestRepository.save(pullRequest);
+            
+            return TaskResult.success("PR created: " + createdPr.getHtmlUrl());
+                
+        } catch (Exception e) {
+            return TaskResult.failure("PR creation failed: " + e.getMessage());
+        }
+    }
+}
+```
+
+#### 6. Notification Agent (NotificationAgent)
+The NotificationAgent handles stakeholder communications for build fix results, supporting success, failure, and manual intervention notifications with customizable recipients and email templates.
 
 ### Database Schema for Learning System
 
